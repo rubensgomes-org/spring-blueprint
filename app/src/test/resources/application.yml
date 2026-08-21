@@ -1,0 +1,10 @@
+############################ test ###########################################
+logging:
+  level:
+    com.rubensgomes.sample: "trace"
+    org.springframework: "info"
+local:
+  server:
+    port: 9898
+server:
+  port: 9999

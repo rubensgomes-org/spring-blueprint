@@ -1,0 +1,9 @@
+# .editorconfig
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+
+[*.{kt,kts}]
+# Specific rules for Kotlin and Kotlin Script files`

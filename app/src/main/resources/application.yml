@@ -1,0 +1,41 @@
+############################ default ###########################################
+## https://docs.spring.io/spring-boot/appendix/application-properties/index.html#appendix.application-properties.data
+spring:
+  application:
+    name: "sample-java-app"
+  # disable docker compose up when running ./gradlew bootRun
+  docker:
+    compose:
+      lifecycle-management: none
+  # timeout to handle sigterm (default is 30s)
+  lifecycle:
+    timeout-per-shutdown-phase: 5s
+  # color the logs when possible
+  output:
+    ansi:
+      enabled: DETECT
+
+## --------------- >>> logging <<< --------------------------------------------
+logging:
+  group:
+    tomcat: "org.apache.catalina,org.apache.coyote,org.apache.tomcat"
+  level:
+    com.rubensgomes.sample: "trace"
+    root: "error"
+    tomcat: "warn"
+    # spring boot "logging.group.web"
+    # org.springframework.core.codec
+    # org.springframework.http
+    # org.springframework.web
+    # org.springframework.boot.actuate.endpoint.web
+    # org.springframework.boot.web.servlet.ServletContextInitializerBeans
+    web: "warn"
+
+## --------------- >>> server <<< ---------------------------------------------
+server:
+  error:
+    include-message: "always"
+  port: 8080
+  servlet:
+    context-path: "/"
+  shutdown: "graceful"
