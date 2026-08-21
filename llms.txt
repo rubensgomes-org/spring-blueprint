@@ -1,0 +1,48 @@
+# spring-blueprint
+
+> A working Spring Boot 4 microservice in Java 25 that doubles as a reference Gradle build and an experimentation sandbox. It exists to be cloned as the starting point for new projects, to demonstrate Spring Boot layering and design patterns, and to serve as a stable base for trying out new technologies, CI/CD workflows, and cloud deployments.
+
+Key facts for working in this repository:
+
+- Single Gradle subproject named `app`; the root project has no build script, so `./gradlew build` and `./gradlew :app:build` are equivalent.
+- Always use the wrapper `./gradlew` (Gradle 9.7.0). Compilation and tests run on an auto-provisioned Java 25 Amazon Corretto toolchain, independent of the JDK running Gradle.
+- The `libs` version catalog is NOT a local `gradle/libs.versions.toml`. It resolves from the published catalog `com.rubensgomes:gradle-catalog`, declared in `settings.gradle.kts`. Never hard-code a plugin or library version in the build script.
+- Library versions are supplied by the Spring Boot BOM imported via `platform(libs.spring.boot.bom)`. Dependency coordinates deliberately omit versions.
+- A `platform()` import applies only to the configuration it is declared on and configurations extending it. `annotationProcessor`, `testAnnotationProcessor`, and `developmentOnly` extend nothing and import the BOM explicitly. A versionless dependency added to any other standalone configuration must do the same, or it fails with `Could not find <group>:<name>:` and no version.
+- Project properties live in two files: `app/gradle.properties` (coordinates, version, SCM) and the root `gradle.properties` (developer identity, license, SonarQube, Gradle daemon). Read them with the `gradleProperty(name)` helper in `app/build.gradle.kts`. Note that `providers.gradleProperty(...)` does NOT resolve values from a subproject `gradle.properties`; the helper uses `findProperty` for that reason.
+- `check` is a real gate: Spotless format verification, the JUnit 5 suite, and a JaCoCo rule requiring 90% line and 90% branch coverage. `bootJar`, `assemble`, `build`, and `release` all depend on it, so packaging runs the full verification.
+- Spotless verifies but never rewrites during compilation. Run `./gradlew spotlessApply` to format. Badly formatted code fails the build.
+- The header comment in `app/build.gradle.kts` is a plain block comment, not KDoc. ktlint's `standard:kdoc` rule rejects KDoc at the top level of a Gradle script.
+- `GITHUB_USER` and `GITHUB_TOKEN` are required to resolve dependencies on a cold cache and to publish. `SONAR_TOKEN` is required only by the `sonar` task.
+- The Gradle configuration cache is disabled because the release plugin is incompatible with it.
+
+## Documentation
+
+- [README.md](README.md): Project purpose, technology stack, demonstrated design patterns, testing approach, template instructions, and roadmap.
+- [BUILD.md](BUILD.md): Complete Gradle build reference — every task, when it runs, how to invoke it, where configuration lives, the build lifecycle graph, and troubleshooting for common failures.
+
+## Build configuration
+
+- [settings.gradle.kts](settings.gradle.kts): Project inclusion, plugin management, dependency repositories including GitHub Packages, and the shared version catalog declaration.
+- [app/build.gradle.kts](app/build.gradle.kts): The entire build — plugins, dependencies, toolchain, jar manifests, JaCoCo coverage rules, Spotless formatting, maven-publish, release, and SonarQube configuration.
+- [gradle.properties](gradle.properties): Developer identity, license metadata, GitHub Packages URL, SonarQube coordinates, and Gradle daemon settings shared across the build.
+- [app/gradle.properties](app/gradle.properties): Module coordinates — `group`, `version`, `artifactId`, `title`, `description`, `mainClass`, and SCM URLs. The version must end in `-SNAPSHOT` for the release plugin.
+- [.editorconfig](.editorconfig): ktlint formatting rules applied to `*.gradle.kts` by Spotless.
+
+## Application source
+
+- [app/src/main/java/com/rubensgomes/blueprint/App.java](app/src/main/java/com/rubensgomes/blueprint/App.java): The `@SpringBootApplication` entry point, referenced by the `mainClass` property.
+- [app/src/main/java/com/rubensgomes/blueprint/web/controller/HelloWorldRestController.java](app/src/main/java/com/rubensgomes/blueprint/web/controller/HelloWorldRestController.java): REST layer serving `GET /api/v1/helloworld`. Uses constructor injection and delegates all business responsibility to the service layer.
+- [app/src/main/java/com/rubensgomes/blueprint/service/HelloWorldService.java](app/src/main/java/com/rubensgomes/blueprint/service/HelloWorldService.java): Business layer returning a model response type, with a `@PreDestroy` shutdown hook.
+- [app/src/main/java/com/rubensgomes/blueprint/model/response/MessageResponse.java](app/src/main/java/com/rubensgomes/blueprint/model/response/MessageResponse.java): Immutable value object with Jakarta Bean Validation constraints and value-based equality.
+- [app/src/main/java/com/rubensgomes/blueprint/event/AppInitEventListener.java](app/src/main/java/com/rubensgomes/blueprint/event/AppInitEventListener.java): Observer pattern via `ApplicationListener`, logging host and port once the servlet container is initialized.
+- [app/src/main/java/com/rubensgomes/blueprint/event/AppShutdownEventListener.java](app/src/main/java/com/rubensgomes/blueprint/event/AppShutdownEventListener.java): Observer pattern handling `ContextClosedEvent` on SIGTERM.
+- [app/src/main/resources/application.yml](app/src/main/resources/application.yml): Runtime configuration — port 8080, graceful shutdown, logging levels and groups.
+
+## Optional
+
+- [app/src/test/java/com/rubensgomes/blueprint/AppTest.java](app/src/test/java/com/rubensgomes/blueprint/AppTest.java): Full `@SpringBootTest` context load test.
+- [app/src/test/java/com/rubensgomes/blueprint/web/controller/HelloWorldRestControllerTest.java](app/src/test/java/com/rubensgomes/blueprint/web/controller/HelloWorldRestControllerTest.java): Standalone MockMvc web layer test without booting the application.
+- [app/src/test/java/com/rubensgomes/blueprint/model/response/MessageResponseTest.java](app/src/test/java/com/rubensgomes/blueprint/model/response/MessageResponseTest.java): Nested tests exercising a real Jakarta `Validator`.
+- [Spring Boot Gradle plugin](https://docs.spring.io/spring-boot/gradle-plugin/index.html): Reference for `bootJar`, `bootRun`, and application packaging.
+- [Gradle user guide](https://docs.gradle.org/current/userguide/userguide.html): Reference for the core plugins used here.
