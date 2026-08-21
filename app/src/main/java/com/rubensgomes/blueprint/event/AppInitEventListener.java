@@ -17,12 +17,10 @@ package com.rubensgomes.blueprint.event;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.web.server.servlet.context.ServletWebServerInitializedEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.stereotype.Component;
-
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * Handles application initialization event to display IP and port.

@@ -15,12 +15,10 @@
  */
 package com.rubensgomes.blueprint.service;
 
-import org.springframework.stereotype.Service;
-
 import com.rubensgomes.blueprint.model.response.MessageResponse;
-
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
 
 /**
  * A very simple service class that responds with a "Hello World!" message response.
