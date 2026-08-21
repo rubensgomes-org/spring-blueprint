@@ -33,14 +33,11 @@ pluginManagement {
         mavenCentral()
     }
 
-    // Fetch releasePluginVersion directly from gradle.properties
-    val releasePluginVersion = 
-      settings.extra.properties["releasePluginVersion"] as? String
-        ?: throw GradleException("Property 'releasePluginVersion' not found in gradle.properties")
-
-    plugins {
-        id("net.researchgate.release") version releasePluginVersion
-    }
+    // NOTE: no plugin versions are pinned here. Every third-party plugin is
+    // applied in "app/build.gradle.kts" via alias(libs.plugins.*), so the
+    // shared "com.rubensgomes:gradle-catalog" is the single source of truth
+    // for versions. A version declared on the plugin request always wins over
+    // a pluginManagement default, so pinning here would have no effect.
 }
 
 // ------------------- Global Plugins -------------------
@@ -54,13 +51,30 @@ dependencyResolutionManagement {
 
     // Helper function to configure GitHub Maven repos with credentials
     fun org.gradle.api.artifacts.dsl.RepositoryHandler.githubRepo(url: String?) {
-        if (!url.isNullOrBlank()) {
-            maven {
-                setUrl(url)
-                credentials {
-                    username = System.getenv("GITHUB_USER")
-                    password = System.getenv("GITHUB_TOKEN")
-                }
+        if (url.isNullOrBlank()) return
+
+        val githubUser = System.getenv("GITHUB_USER")
+        val githubToken = System.getenv("GITHUB_TOKEN")
+
+        // NOTE: deliberately a warning rather than an error. Once the catalog
+        // and any com.rubensgomes artifacts are in the Gradle module cache the
+        // build resolves them without contacting GitHub, so an unauthenticated
+        // build is valid. It is the first build on a cold cache -- a fresh
+        // clone of this blueprint -- that fails, and it fails with a 401 that
+        // never mentions which variables are missing.
+        if (githubUser.isNullOrBlank() || githubToken.isNullOrBlank()) {
+            org.gradle.api.logging.Logging.getLogger("settings").warn(
+                "GITHUB_USER and/or GITHUB_TOKEN are not set. Artifacts not already " +
+                    "in the Gradle cache cannot be downloaded from $url. Export both " +
+                    "variables if dependency resolution fails with HTTP 401.",
+            )
+        }
+
+        maven {
+            setUrl(url)
+            credentials {
+                username = githubUser
+                password = githubToken
             }
         }
     }
@@ -70,7 +84,6 @@ dependencyResolutionManagement {
         settings.extra.properties["mavenRepoPackages"] as? String
     repositories {
         mavenCentral()
-        google()
         githubRepo(mavenRepoPackages)
     }
 

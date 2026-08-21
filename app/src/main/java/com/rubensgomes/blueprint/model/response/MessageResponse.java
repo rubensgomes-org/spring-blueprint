@@ -15,10 +15,9 @@
  */
 package com.rubensgomes.blueprint.model.response;
 
-import java.util.Objects;
-
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import java.util.Objects;
 
 /**
  * A very basic message response type.

@@ -22,7 +22,9 @@
  * Environment variables expected by a full build/release:
  *
  *  - GITHUB_USER / GITHUB_TOKEN -> read in "settings.gradle.kts" to
- *                                  authenticate against GitHub Packages.
+ *                                  authenticate against GitHub Packages,
+ *                                  and again by the publishing block below
+ *                                  when uploading this artifact.
  *  - SONAR_TOKEN                -> required by the "sonar" task.
  *
  * Formatting note: this header is a plain block comment, NOT a KDoc
@@ -53,8 +55,8 @@ plugins {
     id("jacoco")
     // Java compilation, testing, packaging (also applies "base")
     id("java")
-    // allows this project to publish its own version catalog
-    id("version-catalog")
+    // publishes the jar, its POM and the sources/javadoc jars to a Maven repo
+    id("maven-publish")
     // net.researchgate.release: version bump + tag + branch merge release flow
     alias(libs.plugins.release)
     // org.sonarqube: static analysis upload to SonarCloud
@@ -63,8 +65,6 @@ plugins {
     alias(libs.plugins.spotless)
     // org.springframework.boot: bootJar/bootRun and Spring Boot packaging
     alias(libs.plugins.spring.boot)
-    // io.spring.dependency-management: Maven-style BOM support
-    alias(libs.plugins.spring.dependency.management)
     // com.dorongold.task-tree: prints task dependency trees for debugging
     alias(libs.plugins.task.tree)
 }
@@ -74,6 +74,12 @@ plugins {
 // NOTE: Versions are intentionally omitted from the coordinates below.
 // They are supplied by the Spring Boot BOM imported as a platform, which
 // currently resolves to Spring Boot 4.1.0 through the "libs" catalog.
+//
+// NOTE: the platform() import below is the ONLY dependency-management
+// mechanism in this build. The legacy "io.spring.dependency-management"
+// plugin is deliberately not applied: it imports the same BOM a second time
+// (which showed up as a duplicated <dependencyManagement> entry in the
+// generated POM) and predates Gradle native platform support.
 // ---------------------------------------------------------------------
 // https://docs.gradle.org/current/userguide/platforms.html
 
@@ -82,6 +88,26 @@ dependencies {
     // that managed versions apply to compile and test configurations.
     implementation(platform(libs.spring.boot.bom))
     testImplementation(platform(libs.spring.boot.bom))
+
+    // A platform() import applies ONLY to the configuration it is declared on
+    // and to configurations that extend it. The io.spring.dependency-management
+    // plugin used to hide this by applying managed versions to every
+    // configuration globally.
+    //
+    // "compileOnly" and "testRuntimeOnly" need no import of their own because
+    // compileClasspath and testRuntimeClasspath extend both them and the
+    // implementation buckets above. These two do:
+    //
+    //  - annotationProcessor
+    //    testAnnotationProcessor: resolved directly by javac, extend nothing.
+    //  - developmentOnly:     resolved directly by the Spring Boot plugin when
+    //                         building bootJar and running bootRun.
+    //
+    // Without these, the versionless Lombok and devtools coordinates below fail
+    // to resolve with "Could not find ...:" and no version.
+    annotationProcessor(platform(libs.spring.boot.bom))
+    testAnnotationProcessor(platform(libs.spring.boot.bom))
+    developmentOnly(platform(libs.spring.boot.bom))
 
     // ########## compileOnly ##########################################
     // Lombok annotations are only needed at compile time; they are not
@@ -105,6 +131,14 @@ dependencies {
     // ########## annotationProcessor ##################################
     // runs the Lombok processor during javac
     annotationProcessor("org.projectlombok:lombok")
+
+    // ########## testCompileOnly / testAnnotationProcessor ############
+    // The main source set's Lombok wiring does not extend to the test source
+    // set. Without these two, any Lombok annotation used in "src/test" fails
+    // to compile with a "cannot find symbol" error on the generated member
+    // rather than on the annotation itself.
+    testCompileOnly("org.projectlombok:lombok")
+    testAnnotationProcessor("org.projectlombok:lombok")
 
     // ########## runtimeOnly ##########################################
     // (none: add JDBC drivers or other runtime-only artifacts here)
@@ -151,26 +185,57 @@ java {
     }
 }
 
-// Manifest attributes for the plain (non-executable) jar produced by the
-// "jar" task, i.e. "<artifactId>-<version>-plain.jar". The Spring Boot
-// plugin builds the executable jar separately via "bootJar" below.
+// Reads a required Gradle property, declared either in "app/gradle.properties"
+// or in the root "gradle.properties", and fails with an actionable message when
+// it is missing.
 //
-// Values in project.properties come from "app/gradle.properties"; "version"
-// is the standard Gradle project version, and developerName/developerId come
-// from the root "gradle.properties".
+// NOTE: this exists because "project.properties[...]" (i.e. Project.getProperties)
+// is deprecated in Gradle 9 and is removed in Gradle 10:
+// https://docs.gradle.org/current/userguide/upgrading_version_9.html#deprecated_get_properties
+// Only that whole-map accessor is deprecated; findProperty is the supported
+// replacement.
+//
+// NOTE: "providers.gradleProperty(name)" is NOT usable here. It resolves only
+// build-level properties (the root "gradle.properties", GRADLE_USER_HOME and
+// -P flags) and returns no value for anything declared in a subproject
+// "gradle.properties", which is where the coordinates below live.
+fun gradleProperty(name: String): String =
+    project.findProperty(name)?.toString()
+        ?: throw GradleException("Required property '$name' not found in gradle.properties")
+
+// ---------------------------------------------------------------------
+// --------------- >>> Gradle Base Plugin <<< --------------------------
+// NOTE: The "base" plugin (applied by "java") derives archive names from
+// the Gradle project name, which is the subproject directory -- "app".
+// Without this block every archive would be "app-<version>.jar" regardless
+// of the artifactId, since artifactId is otherwise only read into the jar
+// manifest and the published POM.
+// ---------------------------------------------------------------------
+// https://docs.gradle.org/current/userguide/base_plugin.html
+
+base { archivesName.set(gradleProperty("artifactId")) }
+
+// Manifest attributes applied to EVERY jar this project produces: the plain
+// jar, the executable bootJar, and the sources/javadoc jars. Configuring
+// "tasks.jar" alone would leave the bootJar -- the artifact that actually gets
+// deployed -- with only the defaults the Spring Boot plugin writes.
+//
+// Values come from "app/gradle.properties"; "version" is the standard Gradle
+// project version, and developerName/developerId come from the root
+// "gradle.properties".
 //
 // NOTE: "Build-Jdk"/"Created-By" describe the JVM running Gradle, which is
 // not necessarily the Java 25 toolchain used to compile the classes above.
-tasks.jar {
+tasks.withType<Jar>().configureEach {
     manifest {
         attributes(
             mapOf(
-                "Specification-Title" to project.properties["title"],
-                "Implementation-Title" to project.properties["artifactId"],
-                "Implementation-Version" to project.properties["version"],
-                "Implementation-Vendor" to project.properties["developerName"],
-                "Built-By" to project.properties["developerId"],
-                "Build-Jdk" to System.getProperty("java.home"),
+                "Specification-Title" to gradleProperty("title"),
+                "Implementation-Title" to gradleProperty("artifactId"),
+                "Implementation-Version" to project.version.toString(),
+                "Implementation-Vendor" to gradleProperty("developerName"),
+                "Built-By" to gradleProperty("developerId"),
+                "Build-Jdk" to System.getProperty("java.version"),
                 "Created-By" to
                     "${System.getProperty("java.version")} (${System.getProperty("java.vendor")})",
             ),
@@ -178,13 +243,11 @@ tasks.jar {
     }
 }
 
-tasks.compileJava {
-    // Reformat sources in place before compiling, so the code that gets
-    // compiled is always the formatted code. This rewrites files during the
-    // build; use "spotlessCheck" instead if a read-only verification is
-    // preferred (for example on CI).
-    dependsOn("spotlessApply")
-}
+// NOTE: compileJava deliberately does NOT depend on spotlessApply. Rewriting
+// sources before every compile means the spotlessCheck wired into "check" only
+// ever inspects files that were just reformatted, so it can never fail and the
+// formatting gate becomes decorative. Run "./gradlew :app:spotlessApply" to
+// format sources; "check" reports violations without modifying anything.
 
 tasks.javadoc {
     // Restrict the Javadoc input to Java sources only. Javadoc cannot parse
@@ -199,11 +262,6 @@ tasks.javadoc {
     }
 }
 
-// Run tests on the JUnit Platform (JUnit 5).
-// NOTE: redundant with the tasks.test { useJUnitPlatform() } call further
-// below; both configure the same "test" task.
-tasks.named<Test>("test") { useJUnitPlatform() }
-
 // ---------------------------------------------------------------------
 // --------------- >>> Gradle jaCoCo Plugin <<< ------------------------
 // NOTE: This section is dedicated to configuring the jacoco plugin.
@@ -213,11 +271,7 @@ tasks.named<Test>("test") { useJUnitPlatform() }
 tasks.jacocoTestReport {
     // the report reads test.exec, so tests must run first
     dependsOn(tasks.test)
-}
 
-// NOTE: a second configuration block for the same task; it could be merged
-// into the one above.
-tasks.jacocoTestReport {
     reports {
         // XML is what the SonarQube scanner consumes
         xml.required = true
@@ -287,6 +341,90 @@ tasks.test {
 }
 
 // ---------------------------------------------------------------------
+// --------------- >>> Gradle maven-publish Plugin <<< -----------------
+// NOTE: This section is what makes the metadata in the two gradle.properties
+// files load-bearing: the coordinates and scm* entries come from
+// "app/gradle.properties", and the license/developer entries from the root
+// "gradle.properties". Publishing components["java"] also attaches the
+// "-sources" and "-javadoc" jars requested in the java { } block above.
+//
+// NOTE: the executable bootJar is deliberately NOT published. Consumers of a
+// Maven repository expect the plain library jar; add artifact(tasks.bootJar)
+// below if the runnable archive is wanted as well.
+//
+// NOTE: the Spring Boot plugin gives the "jar" task the "plain" classifier so
+// its archive does not collide with the bootJar. Every artifact in
+// components["java"] is therefore classified, which leaves the generated POM
+// with <packaging>pom</packaging> and no main artifact. This is intentional
+// here: Gradle consumers resolve the jar correctly through the published
+// Gradle module metadata. A plain Maven consumer would not, so if this project
+// ever needs to be resolvable from Maven, swap the classifiers:
+//     tasks.jar { archiveClassifier.set("") }
+//     tasks.bootJar { archiveClassifier.set("boot") }
+// ---------------------------------------------------------------------
+// https://docs.gradle.org/current/userguide/publishing_maven.html
+
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            // Without an explicit artifactId the publication is named after the
+            // Gradle project directory ("app") instead of "spring-blueprint".
+            groupId = project.group.toString()
+            artifactId = gradleProperty("artifactId")
+            version = project.version.toString()
+
+            from(components["java"])
+
+            pom {
+                name.set(gradleProperty("title"))
+                description.set(gradleProperty("description"))
+                url.set(gradleProperty("scmUrl"))
+
+                licenses {
+                    license {
+                        name.set(gradleProperty("license"))
+                        url.set(gradleProperty("licenseUrl"))
+                    }
+                }
+
+                developers {
+                    developer {
+                        id.set(gradleProperty("developerId"))
+                        name.set(gradleProperty("developerName"))
+                        email.set(gradleProperty("developerEmail"))
+                    }
+                }
+
+                scm {
+                    connection.set(gradleProperty("scmConnection"))
+                    developerConnection.set(gradleProperty("scmConnection"))
+                    url.set(gradleProperty("scmUrl"))
+                }
+            }
+        }
+    }
+
+    repositories {
+        // Same GitHub Packages repo and credentials that "settings.gradle.kts"
+        // uses for reading, here used for writing. When GITHUB_USER/GITHUB_TOKEN
+        // are unset the upload fails with a 401; "publishToMavenLocal" needs
+        // neither the URL nor the credentials.
+        val mavenRepoPackages = project.findProperty("mavenRepoPackages")?.toString()
+
+        if (!mavenRepoPackages.isNullOrBlank()) {
+            maven {
+                name = "GitHubPackages"
+                setUrl(mavenRepoPackages)
+                credentials {
+                    username = providers.environmentVariable("GITHUB_USER").orNull
+                    password = providers.environmentVariable("GITHUB_TOKEN").orNull
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
 // --------------- >>> com.diffplug.spotless Plugin <<< ----------------
 // NOTE: This section is dedicated to configuring the spotless plugin.
 // "spotlessApply" rewrites sources; "spotlessCheck" only verifies and is
@@ -320,11 +458,14 @@ spotless {
     // Java formatting
     java {
         target("src/**/*.java")
-        // Google Java Format: 2-space indent, 100-column limit
+        // Google Java Format: 2-space indent, 100-column limit.
+        // NOTE: this step also removes unused imports and sorts the remaining
+        // ones into Google's canonical order, so no separate
+        // removeUnusedImports() or importOrder() step is configured. Adding an
+        // importOrder() step here would run after this one and silently
+        // override that ordering.
         googleJavaFormat()
-        removeUnusedImports()
         licenseHeader(licenseHeaderText)
-        importOrder("java", "javax", "org", "com", "")
         trimTrailingWhitespace()
         endWithNewline()
     }
@@ -435,17 +576,19 @@ tasks.sonar { dependsOn("check") }
 // https://docs.spring.io/spring-boot/gradle-plugin/index.html
 
 // Entry point baked into the executable jar as its Start-Class: the
-// @SpringBootApplication class in "src/main/java".
-springBoot { mainClass.set("com.rubensgomes.blueprint.App") }
+// @SpringBootApplication class in "src/main/java". The FQCN lives in
+// "app/gradle.properties" so it is declared exactly once.
+springBoot { mainClass.set(gradleProperty("mainClass")) }
 
 tasks.bootJar {
-    // Layered jars split dependencies from application classes so Docker
-    // image layers can be cached independently.
-    // layered.enabled.set(false)
-    layered.enabled.set(true)
     // never package an artifact that has not passed check (tests + spotless)
     dependsOn("check")
-    // NOTE: redundant. The Spring Boot plugin already writes Start-Class
-    // from springBoot.mainClass above.
-    manifest { attributes("Start-Class" to "com.rubensgomes.blueprint.App") }
+    // NOTE: layered jars -- which split dependencies from application classes
+    // so Docker image layers cache independently -- are enabled by default, so
+    // no layered { } configuration is needed here. Set layered.enabled to false
+    // to opt out.
+    //
+    // NOTE: Start-Class is not set here either. The Spring Boot plugin writes
+    // it from springBoot.mainClass above, and the shared manifest block near
+    // the top of this file supplies the remaining attributes.
 }
