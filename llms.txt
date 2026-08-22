@@ -9,6 +9,11 @@ Key facts for working in this repository:
 - The `libs` version catalog is NOT a local `gradle/libs.versions.toml`. It resolves from the published catalog `com.rubensgomes:gradle-catalog`, declared in `settings.gradle.kts`. Never hard-code a plugin or library version in the build script.
 - Library versions are supplied by the Spring Boot BOM imported via `platform(libs.spring.boot.bom)`. Dependency coordinates deliberately omit versions.
 - A `platform()` import applies only to the configuration it is declared on and configurations extending it. `annotationProcessor`, `testAnnotationProcessor`, and `developmentOnly` extend nothing and import the BOM explicitly. A versionless dependency added to any other standalone configuration must do the same, or it fails with `Could not find <group>:<name>:` and no version.
+- Dependency locking is active and enforced in `LockMode.STRICT`. Three lock files pin every resolved version: `settings-gradle.lockfile` (version catalog), `app/gradle.lockfile` (application graph — `annotationProcessor`, `compileClasspath`, `developmentOnly`, `runtimeClasspath`, `testAnnotationProcessor`, `testCompileClasspath`, `testRuntimeClasspath`), and `app/buildscript-gradle.lockfile` (the plugin classpath). All three are committed.
+- Regenerate lock state with `./gradlew :app:dependencies --write-locks` after adding or removing a dependency, after changing the `com.rubensgomes:gradle-catalog` version in `settings.gradle.kts` (the Spring Boot BOM version flows from the catalog, so the whole transitive closure shifts), or after changing which configurations are locked. It requires `GITHUB_USER` and `GITHUB_TOKEN` and cannot run with `--offline`. Never pass `--write-locks` in an automated build.
+- NEVER hand-edit a lock file. A lock file is a forcing constraint, not a checksum: where the lock and the Spring Boot BOM disagree the lock wins, so changing a version to another version that exists silently changes the build instead of failing it. A missing entry fails with `Resolved '<coords>' which is not part of the dependency lock state`; a missing file fails with `Locking strict mode: Configuration '<name>' is locked but does not have lock state.` Both mean: regenerate.
+- `LockMode.STRICT` is set TWICE in `app/build.gradle.kts` — once inside `buildscript { }` and once on the project extension. This is not duplication. The project-level mode does not reach the buildscript classpath; with only that one set, deleting `app/buildscript-gradle.lockfile` leaves the build passing silently. Both lines are load-bearing.
+- The equivalent buildscript-locking block does NOT work in `settings.gradle.kts`: plugins requested through the settings `plugins { }` block do not pass through the settings buildscript classpath, so it locks an empty configuration and writes no lock state. It was tried and removed; do not re-add it.
 - Project properties live in two files: `app/gradle.properties` (coordinates, version, SCM) and the root `gradle.properties` (developer identity, license, SonarQube, Gradle daemon). Read them with the `gradleProperty(name)` helper in `app/build.gradle.kts`. Note that `providers.gradleProperty(...)` does NOT resolve values from a subproject `gradle.properties`; the helper uses `findProperty` for that reason.
 - `check` is a real gate: Spotless format verification, the JUnit 5 suite, and a JaCoCo rule requiring 90% line and 90% branch coverage. `bootJar`, `assemble`, `build`, and `release` all depend on it, so packaging runs the full verification.
 - Spotless verifies but never rewrites during compilation. Run `./gradlew spotlessApply` to format. Badly formatted code fails the build.
@@ -19,7 +24,7 @@ Key facts for working in this repository:
 ## Documentation
 
 - [README.md](README.md): Project purpose, technology stack, demonstrated design patterns, testing approach, template instructions, and roadmap.
-- [BUILD.md](BUILD.md): Complete Gradle build reference — every task, when it runs, how to invoke it, where configuration lives, the build lifecycle graph, and troubleshooting for common failures.
+- [BUILD.md](BUILD.md): Complete Gradle build reference — every task, when it runs, how to invoke it, where configuration lives, the build lifecycle graph, dependency locking and lock-file regeneration, and troubleshooting for common failures.
 
 ## Build configuration
 
@@ -27,6 +32,9 @@ Key facts for working in this repository:
 - [app/build.gradle.kts](app/build.gradle.kts): The entire build — plugins, dependencies, toolchain, jar manifests, JaCoCo coverage rules, Spotless formatting, maven-publish, release, and SonarQube configuration.
 - [gradle.properties](gradle.properties): Developer identity, license metadata, GitHub Packages URL, SonarQube coordinates, and Gradle daemon settings shared across the build.
 - [app/gradle.properties](app/gradle.properties): Module coordinates — `group`, `version`, `artifactId`, `title`, `description`, `mainClass`, and SCM URLs. The version must end in `-SNAPSHOT` for the release plugin.
+- [app/gradle.lockfile](app/gradle.lockfile): Generated lock state for the application dependency graph. Regenerate, never edit.
+- [app/buildscript-gradle.lockfile](app/buildscript-gradle.lockfile): Generated lock state for the Gradle plugin classpath. Regenerate, never edit.
+- [settings-gradle.lockfile](settings-gradle.lockfile): Generated lock state for the `libs` version catalog resolution. Gradle locks version-catalog configurations automatically; no configuration declares this.
 - [.editorconfig](.editorconfig): ktlint formatting rules applied to `*.gradle.kts` by Spotless.
 
 ## Application source
@@ -34,7 +42,7 @@ Key facts for working in this repository:
 - [app/src/main/java/com/rubensgomes/blueprint/App.java](app/src/main/java/com/rubensgomes/blueprint/App.java): The `@SpringBootApplication` entry point, referenced by the `mainClass` property.
 - [app/src/main/java/com/rubensgomes/blueprint/web/controller/HelloWorldRestController.java](app/src/main/java/com/rubensgomes/blueprint/web/controller/HelloWorldRestController.java): REST layer serving `GET /api/v1/helloworld`. Uses constructor injection and delegates all business responsibility to the service layer.
 - [app/src/main/java/com/rubensgomes/blueprint/service/HelloWorldService.java](app/src/main/java/com/rubensgomes/blueprint/service/HelloWorldService.java): Business layer returning a model response type, with a `@PreDestroy` shutdown hook.
-- [app/src/main/java/com/rubensgomes/blueprint/model/response/MessageResponse.java](app/src/main/java/com/rubensgomes/blueprint/model/response/MessageResponse.java): Immutable value object with Jakarta Bean Validation constraints and value-based equality.
+- [app/src/main/java/com/rubensgomes/blueprint/model/response/MessageResponse.java](app/src/main/java/com/rubensgomes/blueprint/model/response/MessageResponse.java): A `record` carrying a single `message` component, with Jakarta Bean Validation constraints on the component. Jackson serializes it via the generated accessor, so the wire format is `{"message":"..."}`. The accessor is `message()`, not `getMessage()`.
 - [app/src/main/java/com/rubensgomes/blueprint/event/AppInitEventListener.java](app/src/main/java/com/rubensgomes/blueprint/event/AppInitEventListener.java): Observer pattern via `ApplicationListener`, logging host and port once the servlet container is initialized.
 - [app/src/main/java/com/rubensgomes/blueprint/event/AppShutdownEventListener.java](app/src/main/java/com/rubensgomes/blueprint/event/AppShutdownEventListener.java): Observer pattern handling `ContextClosedEvent` on SIGTERM.
 - [app/src/main/resources/application.yml](app/src/main/resources/application.yml): Runtime configuration — port 8080, graceful shutdown, logging levels and groups.

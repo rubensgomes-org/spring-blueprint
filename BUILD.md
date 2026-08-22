@@ -29,6 +29,7 @@ and when it runs.
 | `./gradlew spotlessApply` | Reformat sources in place |
 | `./gradlew publishToMavenLocal` | Install into `~/.m2/repository` |
 | `./gradlew clean` | Delete `app/build/` |
+| `./gradlew :app:dependencies --write-locks` | Regenerate the dependency lock files |
 
 Always use the wrapper (`./gradlew`), never a locally installed `gradle`. The
 wrapper pins **Gradle 9.7.0**.
@@ -72,11 +73,14 @@ with an unexplained HTTP 401.
 ```
 spring-blueprint/
 ├── settings.gradle.kts        # project inclusion, repositories, version catalog
+├── settings-gradle.lockfile   # lock state: version catalog resolution
 ├── gradle.properties          # developer identity, license, Sonar, Gradle daemon
 ├── BUILD.md                   # this file
 ├── .editorconfig              # ktlint rules for *.gradle.kts
 └── app/
     ├── build.gradle.kts       # the entire build
+    ├── gradle.lockfile        # lock state: application dependencies
+    ├── buildscript-gradle.lockfile  # lock state: plugin classpath
     ├── gradle.properties      # coordinates, version, SCM
     └── src/{main,test}/...
 ```
@@ -119,9 +123,9 @@ which fails with an actionable message when a property is missing.
 ### The `libs` version catalog — dependency versions
 
 `libs` is **not** a local `gradle/libs.versions.toml`. It resolves from the
-published catalog `com.rubensgomes:gradle-catalog:0.2.0`, wired up in
+published catalog `com.rubensgomes:gradle-catalog:0.2.1`, wired up in
 `settings.gradle.kts`. It is the single source of truth for every plugin and
-library version, including Spring Boot (currently **4.1.0**).
+library version, including Spring Boot (currently **4.1.1**).
 
 Dependency coordinates in `app/build.gradle.kts` omit versions deliberately —
 they come from the Spring Boot BOM, imported via `platform(libs.spring.boot.bom)`.
@@ -132,6 +136,84 @@ they come from the Spring Boot BOM, imported via `platform(libs.spring.boot.bom)
 > imports the BOM explicitly. A versionless dependency added to any other
 > standalone configuration will need the same, or it fails to resolve with
 > `Could not find <group>:<name>:` and no version.
+
+### Dependency locking — reproducible resolution
+
+Versionless coordinates keep the build script readable, but on their own they
+make the *transitive* graph a moving target: the same source tree can resolve
+different transitive versions on different days. Dependency locking pins the
+fully resolved graph.
+
+Three lock files, with different scopes:
+
+| File | Locks | Configured in |
+|---|---|---|
+| `settings-gradle.lockfile` | the `libs` catalog resolution (`incomingCatalogForLibs0`) | nothing — Gradle locks version-catalog configurations automatically |
+| `app/gradle.lockfile` | `annotationProcessor`, `compileClasspath`, `developmentOnly`, `runtimeClasspath`, `testAnnotationProcessor`, `testCompileClasspath`, `testRuntimeClasspath` | the "Dependency Locking" section of `app/build.gradle.kts` |
+| `app/buildscript-gradle.lockfile` | the plugin `classpath` — the libraries the Gradle plugins themselves pull in and run inside the build | the "Buildscript Classpath Locking" section of `app/build.gradle.kts` |
+
+The tooling's own *resolvable configurations* — `jacocoAgent`, `jacocoAnt` and
+friends — are deliberately left out of `app/gradle.lockfile`. None reaches the
+compiled output, and each would rewrite that file on every routine tooling bump.
+This is separate from the plugin **classpath**, which is locked in
+`app/buildscript-gradle.lockfile`: the JARs implementing Spotless, SonarQube and
+the release plugin execute inside the build, so their transitive closure is worth
+pinning even though the coverage tooling's runtime graph is not.
+
+> **Note** — a lock file is a *forcing constraint*, not a checksum that
+> resolution is merely compared against. Where the lock and the Spring Boot BOM
+> disagree, the lock wins and the BOM's version is downgraded or upgraded to
+> match. Hand-editing a version in `app/gradle.lockfile` to another version
+> that exists will therefore silently change the build rather than fail it.
+> Never edit these files by hand; regenerate them.
+
+The plugin *versions* are already pinned by the catalog, so
+`app/buildscript-gradle.lockfile` adds the plugins' own transitive closure —
+code that runs inside the build but was previously unpinned.
+
+> **Note** — `LockMode.STRICT` is set **twice** in `app/build.gradle.kts`, once
+> inside `buildscript { }` and once on the project. The two are independent: the
+> project-level setting does not reach the plugin classpath. With only the
+> project one set, deleting `app/buildscript-gradle.lockfile` leaves the build
+> passing silently. Removing either `lockMode` line reintroduces that blind spot
+> for its own graph.
+
+Locking runs in `LockMode.STRICT`, so a missing or half-merged lock file is a
+build failure rather than a silent fall back to "whatever is newest":
+
+```
+> Locking strict mode: Configuration ':app:compileClasspath' is locked but does not have lock state.
+```
+
+A dependency that resolves but is absent from the lock state fails the same way:
+
+```
+> Resolved 'org.springframework:spring-core:7.0.9' which is not part of the dependency lock state
+```
+
+Both messages mean the same thing in practice — **regenerate the lock file**:
+
+```bash
+./gradlew :app:dependencies --write-locks
+```
+
+`GITHUB_USER` and `GITHUB_TOKEN` must be exported for that command. Lock state
+is written from a real resolution against the remote repositories, so it cannot
+be produced with `--offline` from a warm Gradle cache.
+
+Regenerate whenever any of these change:
+
+- a dependency is added to or removed from `app/build.gradle.kts`
+- the `com.rubensgomes:gradle-catalog` version in `settings.gradle.kts` changes
+  — the Spring Boot BOM version flows from the catalog, so the entire
+  transitive closure shifts even though nothing in `app/build.gradle.kts` was
+  touched
+- a locked configuration is added to or removed from `lockedConfigurations`
+
+All three lock files are committed to source control. Never pass `--write-locks` in
+an automated build: it would rewrite the lock state to match whatever resolved
+at that moment, which is precisely the unpredictability locking exists to
+prevent.
 
 ## Running the application
 

@@ -39,7 +39,7 @@ toolchain on first build. A `GITHUB_USER` /
 | Layer      | Choice                                            |
 |------------|---------------------------------------------------|
 | Language   | Java 25 (Amazon Corretto toolchain)               |
-| Framework  | Spring Boot 4.1.0 — Web MVC, Actuator, Validation |
+| Framework  | Spring Boot 4.1.1 — Web MVC, Actuator, Validation |
 | Build      | Gradle 9.7.0, Kotlin DSL                          |
 | Versions   | Shared catalog `com.rubensgomes:gradle-catalog`   |
 | Testing    | JUnit 5, Mockito, AssertJ, Spring Test            |
@@ -52,6 +52,18 @@ toolchain on first build. A `GITHUB_USER` /
 Versions are never hard-coded in the build script. Every plugin and library
 resolves through the shared version catalog, and library versions come from the
 Spring Boot BOM.
+
+That pins the *declared* versions; three lock files pin the *transitive* graph
+on top of it, so the same source tree resolves identically on any machine and on
+any day. Regenerate them after changing a dependency or the catalog version:
+
+```bash
+./gradlew :app:dependencies --write-locks
+```
+
+Locking runs in strict mode — a missing lock file fails the build rather than
+quietly resolving whatever is newest. Details in
+[BUILD.md](BUILD.md#dependency-locking--reproducible-resolution).
 
 ## What it demonstrates
 
@@ -74,7 +86,7 @@ layer means editing one class.
 | Pattern                | Where                                              | Why it's there                                                                                           |
 |------------------------|----------------------------------------------------|----------------------------------------------------------------------------------------------------------|
 | Constructor injection  | `HelloWorldRestController`                         | Dependencies are explicit and final; the class is trivially unit-testable without a Spring context       |
-| Immutable value object | `MessageResponse`                                  | `final` class, `final` field, no setters, value-based `equals`/`hashCode` — safe to share across threads |
+| Immutable value object | `MessageResponse`                                  | A `record`: implicitly final, components final, accessor/`equals`/`hashCode`/`toString` generated — safe to share across threads |
 | Observer               | `AppInitEventListener`, `AppShutdownEventListener` | Lifecycle concerns react to Spring `ApplicationEvent`s instead of being wired into startup code          |
 | Declarative validation | `MessageResponse`                                  | Jakarta Bean Validation constraints on the model, so validation travels with the data                    |
 | Graceful shutdown      | `HelloWorldService.cleanup()`, `application.yml`   | `@PreDestroy` plus a 5s shutdown phase — in-flight requests finish before the JVM exits                  |
@@ -104,6 +116,7 @@ side:
 | `./gradlew spotlessApply`       | Reformat sources                                     |
 | `./gradlew publishToMavenLocal` | Install to `~/.m2`                                   |
 | `./gradlew release`             | Tag, merge to `release`, bump to next snapshot       |
+| `./gradlew :app:dependencies --write-locks` | Regenerate the three dependency lock files |
 
 Full task reference, wiring diagrams, and troubleshooting:
 **[BUILD.md](BUILD.md)**.
@@ -113,11 +126,14 @@ Full task reference, wiring diagrams, and troubleshooting:
 ```
 spring-blueprint/
 ├── settings.gradle.kts        # inclusion, repositories, version catalog
+├── settings-gradle.lockfile   # lock state: version catalog resolution
 ├── gradle.properties          # developer identity, license, Sonar, daemon
 ├── BUILD.md                   # build documentation
 ├── llms.txt                   # machine-readable project index
 └── app/
     ├── build.gradle.kts       # the entire build
+    ├── gradle.lockfile        # lock state: application dependencies
+    ├── buildscript-gradle.lockfile  # lock state: plugin classpath
     ├── gradle.properties      # coordinates, version, SCM
     └── src/
         ├── main/java/com/rubensgomes/blueprint/
@@ -141,6 +157,8 @@ property instead.
 3. Replace the SonarCloud placeholders in `gradle.properties`
 4. Rename the `com.rubensgomes.blueprint` package
 5. Delete the `HelloWorld*` classes and their tests
+6. Once your dependencies settle, regenerate the lock files with
+   `./gradlew :app:dependencies --write-locks` and commit them
 
 Everything else — toolchain, formatting, coverage gate, publishing, release
 flow — carries over unchanged.

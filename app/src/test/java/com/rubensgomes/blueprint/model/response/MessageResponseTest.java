@@ -39,22 +39,25 @@ class MessageResponseTest {
   private static final String MESSAGE = "Hello World!";
 
   @Test
-  @DisplayName("getMessage returns the text handed to the constructor")
-  void getMessageReturnsConstructorArgument() {
-    assertThat(new MessageResponse(MESSAGE).getMessage()).isEqualTo(MESSAGE);
+  @DisplayName("message returns the text handed to the constructor")
+  void messageReturnsConstructorArgument() {
+    assertThat(new MessageResponse(MESSAGE).message()).isEqualTo(MESSAGE);
   }
 
   @Test
   @DisplayName("a null message is carried through unchanged")
-  void getMessageReturnsNullWhenConstructedWithNull() {
-    assertThat(new MessageResponse(null).getMessage()).isNull();
+  void messageReturnsNullWhenConstructedWithNull() {
+    assertThat(new MessageResponse(null).message()).isNull();
   }
 
   @Test
   @DisplayName("toString exposes the message")
   void toStringContainsTheMessage() {
-    assertThat(new MessageResponse(MESSAGE).toString())
-        .isEqualTo("MessageResponse(message='" + MESSAGE + "')");
+    // The record-generated format, "Name[component=value]", replaces the
+    // hand-written "Name(component='value')" this type used before it
+    // became a record.
+    assertThat(new MessageResponse(MESSAGE))
+        .hasToString("MessageResponse[message=" + MESSAGE + "]");
   }
 
   @Nested
