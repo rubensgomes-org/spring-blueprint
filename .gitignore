@@ -39,3 +39,5 @@ out/
 ### MacOS files ###
 .DS_Store
 
+### Miscellaneous ###
+TODO.md

@@ -1,6 +1,6 @@
 /*
- * Blueprint Gradle build script (Kotlin DSL) used by Rubens Gomes when
- * bootstrapping a new Gradle + Spring Boot Java project.
+ * Blueprint Gradle build script (Kotlin DSL) used by Rubens Gomes
+ * in Gradle + Spring Boot Java projects.
  *
  * This script configures the ":app" subproject, which is declared in the
  * root "settings.gradle.kts" via include("app").
@@ -41,6 +41,40 @@
  */
 
 // ---------------------------------------------------------------------
+// --------------- >>> Buildscript Classpath Locking <<< ---------------
+// NOTE: this block locks the plugin classpath, which is a different
+// graph from the application dependencies locked further below. The
+// plugin VERSIONS are already pinned -- they come from the "libs"
+// catalog via the alias(...) entries in the plugins block -- but the
+// libraries those plugins drag in transitively are not, and they run
+// inside the build. Lock state lands in "app/buildscript-gradle.lockfile".
+//
+// NOTE: this must stay ABOVE the plugins block. A buildscript block is
+// only honoured when it precedes plugin application.
+//
+// NOTE: LockMode.STRICT is set again here. The lockMode configured on the
+// project extension below does NOT reach the buildscript classpath: with
+// only that one set, deleting "app/buildscript-gradle.lockfile" was
+// verified to leave the build passing silently. The two lock modes are
+// independent and both are needed.
+//
+// NOTE: the equivalent block in "settings.gradle.kts" was tried and
+// removed. Plugins requested through the settings "plugins" block do not
+// pass through the settings buildscript classpath, so it locked an empty
+// configuration and wrote no lock state at all.
+// ---------------------------------------------------------------------
+// https://docs.gradle.org/current/userguide/dependency_locking.html#locking_buildscript_classpath
+
+buildscript {
+    dependencyLocking {
+        lockMode.set(LockMode.STRICT)
+    }
+    configurations.classpath {
+        resolutionStrategy.activateDependencyLocking()
+    }
+}
+
+// ---------------------------------------------------------------------
 // --------------- >>> Gradle Plugins <<< ------------------------------
 // NOTE: Core Gradle plugins are applied by id; third-party plugins are
 // applied via alias(...) so their versions come from the shared "libs"
@@ -73,84 +107,150 @@ plugins {
 // --------------- >>> Dependencies <<< --------------------------------
 // NOTE: Versions are intentionally omitted from the coordinates below.
 // They are supplied by the Spring Boot BOM imported as a platform, which
-// currently resolves to Spring Boot 4.1.0 through the "libs" catalog.
+// currently resolves to Spring Boot release version defined in the plugins
+// alias(libs.plugins.spring.boot) through the "libs" catalog.
 //
 // NOTE: the platform() import below is the ONLY dependency-management
 // mechanism in this build. The legacy "io.spring.dependency-management"
 // plugin is deliberately not applied: it imports the same BOM a second time
 // (which showed up as a duplicated <dependencyManagement> entry in the
 // generated POM) and predates Gradle native platform support.
+//
+// NOTE: a platform() import applies ONLY to the configuration it is
+// declared on and to configurations that extend it. "compileOnly",
+// "testCompileOnly" and "testRuntimeOnly" need no import of their own,
+// because compileClasspath, testCompileClasspath and testRuntimeClasspath
+// extend both them and the implementation buckets. "annotationProcessor",
+// "testAnnotationProcessor" and "developmentOnly" extend nothing -- javac
+// and the Spring Boot plugin resolve them directly -- so each imports the
+// BOM itself. Without that, the versionless Lombok and devtools
+// coordinates fail to resolve with "Could not find ...:" and no version.
+//
+// NOTE: declarations are clustered by destination -- one contiguous group
+// per configuration, alphabetically, each opening with its own platform()
+// import where it needs one. Gradle itself does not care about the order,
+// but interleaving configurations trips SonarQube rule kotlin:S6629
+// ("Dependencies should be grouped by destination") and makes it easy to
+// miss that a configuration already has an entry further down.
 // ---------------------------------------------------------------------
 // https://docs.gradle.org/current/userguide/platforms.html
 
 dependencies {
-    // Import the Spring Boot 4 BOM into both the main and test graphs so
-    // that managed versions apply to compile and test configurations.
-    implementation(platform(libs.spring.boot.bom))
-    testImplementation(platform(libs.spring.boot.bom))
-
-    // A platform() import applies ONLY to the configuration it is declared on
-    // and to configurations that extend it. The io.spring.dependency-management
-    // plugin used to hide this by applying managed versions to every
-    // configuration globally.
-    //
-    // "compileOnly" and "testRuntimeOnly" need no import of their own because
-    // compileClasspath and testRuntimeClasspath extend both them and the
-    // implementation buckets above. These two do:
-    //
-    //  - annotationProcessor
-    //    testAnnotationProcessor: resolved directly by javac, extend nothing.
-    //  - developmentOnly:     resolved directly by the Spring Boot plugin when
-    //                         building bootJar and running bootRun.
-    //
-    // Without these, the versionless Lombok and devtools coordinates below fail
-    // to resolve with "Could not find ...:" and no version.
+    // ########## annotationProcessor ##################################
+    // Resolved directly by javac and extends nothing, so it imports the
+    // BOM itself. Runs the Lombok processor during compilation.
     annotationProcessor(platform(libs.spring.boot.bom))
-    testAnnotationProcessor(platform(libs.spring.boot.bom))
-    developmentOnly(platform(libs.spring.boot.bom))
+    annotationProcessor("org.projectlombok:lombok")
 
     // ########## compileOnly ##########################################
     // Lombok annotations are only needed at compile time; they are not
-    // required on the runtime classpath.
+    // required on the runtime classpath. No platform() import needed --
+    // compileClasspath extends this and the implementation bucket.
     compileOnly("org.projectlombok:lombok")
 
+    // ########## developmentOnly ######################################
+    // Resolved directly by the Spring Boot plugin for bootJar and bootRun,
+    // and extends nothing, so it imports the BOM itself. devtools enables
+    // automatic restart and live reload during local development; it is
+    // excluded from the packaged bootJar.
+    developmentOnly(platform(libs.spring.boot.bom))
+    developmentOnly("org.springframework.boot:spring-boot-devtools")
+
     // ########## implementation #######################################
-    // spring boot starter dependencies
+    // The BOM import here is what supplies managed versions to the main
+    // compile and runtime graphs.
     // actuator:   health, metrics and management endpoints
     // validation: Jakarta Bean Validation (Hibernate Validator)
     // web:        Spring MVC on the default embedded Tomcat container
+    implementation(platform(libs.spring.boot.bom))
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-web")
 
-    // ########## developmentOnly ######################################
-    // devtools enables automatic restart and live reload during local
-    // development; it is excluded from the packaged bootJar.
-    developmentOnly("org.springframework.boot:spring-boot-devtools")
-
-    // ########## annotationProcessor ##################################
-    // runs the Lombok processor during javac
-    annotationProcessor("org.projectlombok:lombok")
-
-    // ########## testCompileOnly / testAnnotationProcessor ############
-    // The main source set's Lombok wiring does not extend to the test source
-    // set. Without these two, any Lombok annotation used in "src/test" fails
-    // to compile with a "cannot find symbol" error on the generated member
-    // rather than on the annotation itself.
-    testCompileOnly("org.projectlombok:lombok")
-    testAnnotationProcessor("org.projectlombok:lombok")
-
     // ########## runtimeOnly ##########################################
     // (none: add JDBC drivers or other runtime-only artifacts here)
 
+    // ########## testAnnotationProcessor ##############################
+    // The main source set's Lombok wiring does not extend to the test
+    // source set. Without this and the testCompileOnly entry below, any
+    // Lombok annotation used in "src/test" fails to compile with a
+    // "cannot find symbol" error on the generated member rather than on
+    // the annotation itself. Extends nothing, so it imports the BOM.
+    testAnnotationProcessor(platform(libs.spring.boot.bom))
+    testAnnotationProcessor("org.projectlombok:lombok")
+
+    // ########## testCompileOnly ######################################
+    // The test-source counterpart to the compileOnly entry above; see the
+    // testAnnotationProcessor note for why both are required.
+    testCompileOnly("org.projectlombok:lombok")
+
     // ########## testImplementation ###################################
-    // pulls in JUnit 5, AssertJ, Mockito, Spring Test and friends
+    // The BOM import here supplies managed versions to the test graphs.
+    // The starter pulls in JUnit 5, AssertJ, Mockito, Spring Test and
+    // friends.
+    testImplementation(platform(libs.spring.boot.bom))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 
     // ########## testRuntimeOnly ######################################
     // required on the JUnit Platform to discover and launch the engines
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
+
+// ---------------------------------------------------------------------
+// --------------- >>> Dependency Locking <<< --------------------------
+// NOTE: the Spring Boot BOM imported above pins the versions of the
+// DECLARED coordinates only. It says nothing about the transitive closure
+// those coordinates drag in, so two builds run on different days can
+// resolve different transitive versions from the same source tree.
+// Dependency locking records the fully resolved graph in
+// "app/gradle.lockfile" and fails the build when a later resolution
+// disagrees with it.
+//
+// NOTE: locking is applied to a fixed list rather than through
+// "lockAllConfigurations()". That helper also locks the JaCoCo, Spotless,
+// SonarQube and release-plugin configurations. None of those reach the
+// compiled output, and each would rewrite the lockfile on every routine
+// tooling bump, turning plugin upgrades into lockfile merge conflicts.
+//
+// NOTE: LockMode.STRICT is deliberate. Under the DEFAULT mode a missing
+// lockfile is treated as "nothing to verify" and resolution silently falls
+// back to whatever is newest -- precisely the unpredictability that
+// locking exists to remove. STRICT turns an absent or half-merged lockfile
+// into a build failure instead.
+//
+// The companion "settings-gradle.lockfile" in the root directory is a
+// separate lock state covering the "libs" version catalog resolution. It
+// needs no configuration: Gradle locks version-catalog configurations on
+// its own.
+//
+// Regenerate after any dependency or catalog change:
+//     ./gradlew :app:dependencies --write-locks
+// GITHUB_USER and GITHUB_TOKEN must be set for that command; lock state
+// cannot be written from the Gradle cache with --offline.
+// ---------------------------------------------------------------------
+// https://docs.gradle.org/current/userguide/dependency_locking.html
+
+// Configurations whose resolved graph reaches compiled output or the test
+// run. "jacocoAgent" and "jacocoAnt" are deliberately absent: they carry
+// coverage tooling that is never packaged into an artifact.
+val lockedConfigurations =
+    setOf(
+        "annotationProcessor",
+        "compileClasspath",
+        "developmentOnly",
+        "runtimeClasspath",
+        "testAnnotationProcessor",
+        "testCompileClasspath",
+        "testRuntimeClasspath",
+    )
+
+dependencyLocking {
+    lockMode.set(LockMode.STRICT)
+}
+
+configurations
+    .matching { it.name in lockedConfigurations }
+    .configureEach { resolutionStrategy.activateDependencyLocking() }
 
 // ---------------------------------------------------------------------
 // --------------- >>> Gradle IDEA Plugin  <<< -------------------------
@@ -544,12 +644,11 @@ release {
 // https://docs.sonarsource.com/sonarqube-server/latest/analyzing-source-code/scanners/sonarscanner-for-gradle/
 
 // --------------- >>> constants <<< -----------------------------------
-// SonarQube coordinates read from the root "gradle.properties". The
-// checked-in values are "@SONAR_PROJECT_KEY@"/"@SONAR_ORGANIZATION@"
-// placeholders that are expected to be substituted before analysis.
+// SonarQube coordinates read from the root "gradle.properties".
 // NOTE: the "as String" casts throw if a property is absent, so all three
 // must be defined for the build to configure at all.
 val sonarKey = project.findProperty("sonar.projectKey") as String
+val sonarName = project.findProperty("sonar.projectName") as String
 val sonarOrg = project.findProperty("sonar.organization") as String
 val sonarUrl = project.findProperty("sonar.host.url") as String
 
@@ -557,6 +656,7 @@ sonar {
     properties {
         // SONAR_TOKEN must be defined as an environment variable
         property("sonar.projectKey", sonarKey)
+        property("sonar.projectName", sonarName)
         property("sonar.organization", sonarOrg)
         property("sonar.host.url", sonarUrl)
     }
@@ -570,7 +670,7 @@ sonar {
 tasks.sonar { dependsOn("check") }
 
 // ---------------------------------------------------------------------
-// --------------- >>> org.springframework.boot Plugin <<< --------------------
+// --------------- >>> org.springframework.boot Plugin <<< -------------
 // NOTE: This section is dedicated to configuring the Spring Boot plugin.
 // ---------------------------------------------------------------------
 // https://docs.spring.io/spring-boot/gradle-plugin/index.html

@@ -43,7 +43,7 @@ class HelloWorldServiceTest {
     MessageResponse response = service.helloWorld();
 
     assertThat(response).isNotNull().isEqualTo(new MessageResponse("Hello World!"));
-    assertThat(response.getMessage()).isEqualTo("Hello World!");
+    assertThat(response.message()).isEqualTo("Hello World!");
   }
 
   @Test

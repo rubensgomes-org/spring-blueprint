@@ -30,17 +30,17 @@
 - NEVER proactively create documentation files
 - Do only what's asked, nothing more
 
-## Language Specific Guidelines
+## Java Language Specific Guidelines
 
-1. Constructor injection for dependencies
-2. Records for DTOs
-3. Always add Javadoc for packages, classes, interfaces, methods, variables
-4. Use Lombok annotations
-5. Use Lombok @Slf4j for logging
-6. Java 11+ features (var, records, streams)
-7. Optional for nullable returns instead of null
-8. Streams and Lambdas for collections
-9. Enums for fixed constants
-10. Try-with-resources for resource management
-11. Avoid wildcard imports
-12. Use `Objects.requireNonNull()` for null checks
+- Constructor injection for dependencies
+- Records for DTOs
+- Always add Javadoc for packages, classes, interfaces, methods, variables
+- Use Lombok annotations
+- Use Lombok @Slf4j for logging
+- Java 11+ features (var, records, streams)
+- Optional for nullable returns instead of null
+- Streams and Lambdas for collections
+- Enums for fixed constants 
+- Try-with-resources for resource management
+- Avoid wildcard imports 
+- Use `Objects.requireNonNull()` for null checks
