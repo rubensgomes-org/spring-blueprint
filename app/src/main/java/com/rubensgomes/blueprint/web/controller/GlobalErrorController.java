@@ -27,6 +27,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -62,7 +63,29 @@ public class GlobalErrorController implements ErrorController {
    * @param request the forwarded request carrying the {@code jakarta.servlet.error.*} attributes
    * @return the error body, with the same HTTP status the original request failed with
    */
-  @RequestMapping(path = ERROR_PATH, produces = MediaType.APPLICATION_JSON_VALUE)
+  // NOTE: the accepted methods are listed explicitly rather than left to the
+  // @RequestMapping default, which silently accepts every method including TRACE.
+  //
+  // The list is broad on purpose. The container forwards the ORIGINAL request
+  // method when it dispatches to "/error", so a failed POST arrives here as a
+  // POST. Narrowing this to GET would make every non-GET failure return 405
+  // instead of the intended status -- a client POSTing to a mistyped URL would
+  // get "405 Method Not Allowed" rather than the 404 it actually caused.
+  //
+  // TRACE is the one deliberate omission: the application never serves it, and
+  // echoing a request back is a well-known cross-site tracing liability.
+  @RequestMapping(
+      path = ERROR_PATH,
+      method = {
+        RequestMethod.GET,
+        RequestMethod.HEAD,
+        RequestMethod.POST,
+        RequestMethod.PUT,
+        RequestMethod.PATCH,
+        RequestMethod.DELETE,
+        RequestMethod.OPTIONS,
+      },
+      produces = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<ErrorResponse> handleError(HttpServletRequest request) {
     Objects.requireNonNull(request, "request must not be null");
 

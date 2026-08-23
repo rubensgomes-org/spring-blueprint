@@ -21,8 +21,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        APP_VERSION: "0.0.4-SNAPSHOT"
+      ## NOTE: APP_VERSION is deliberately NOT passed here. It only feeds the
+      ## "org.opencontainers.image.version" label, and hardcoding it in this
+      ## file made it a second source of truth for the project version -- it
+      ## went stale the first time the release plugin bumped the version.
+      ## Compose builds therefore carry the Dockerfile's "unknown" default,
+      ## which is honest. Use "./gradlew dockerBuild" for a correctly stamped
+      ## image: that task reads the version from "app/gradle.properties" and
+      ## tags "<artifactId>:<version>" alongside "<artifactId>:local".
+      ##
       ## Maps to "--mount=type=secret,id=github_user" in the Dockerfile.
       secrets:
         - github_user
