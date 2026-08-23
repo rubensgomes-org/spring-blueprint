@@ -304,6 +304,37 @@ fun gradleProperty(name: String): String =
         ?: throw GradleException("Required property '$name' not found in gradle.properties")
 
 // ---------------------------------------------------------------------
+// --------------- >>> Resource Filtering <<< --------------------------
+// NOTE: "spring.application.name" in "application.yml" is written as the
+// token "@artifactId@" and replaced here with the "artifactId" property
+// from "app/gradle.properties", so the module coordinate is declared
+// exactly once instead of being duplicated into the runtime config.
+//
+// NOTE: ReplaceTokens, with its default "@...@" delimiters, is used rather
+// than Gradle's expand(). expand() runs the file through the Groovy
+// template engine, which evaluates "${...}" -- the same syntax Spring uses
+// for its own property placeholders. A future "${SOME_ENV:default}" in
+// application.yml would then break the build or be silently substituted
+// away at packaging time. "@...@" cannot collide with Spring.
+//
+// NOTE: inputs.property is required for correctness. The task output
+// depends on a Gradle property that is not otherwise one of its inputs, so
+// without this the task stays up-to-date after artifactId changes and a
+// stale name remains baked into "build/resources".
+// ---------------------------------------------------------------------
+// https://docs.gradle.org/current/userguide/working_with_files.html#sec:filtering_files
+
+tasks.processResources {
+    val artifactId = gradleProperty("artifactId")
+    inputs.property("artifactId", artifactId)
+    filesMatching("application*.yml") {
+        filter<org.apache.tools.ant.filters.ReplaceTokens>(
+            "tokens" to mapOf("artifactId" to artifactId),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------
 // --------------- >>> Gradle Base Plugin <<< --------------------------
 // NOTE: The "base" plugin (applied by "java") derives archive names from
 // the Gradle project name, which is the subproject directory -- "app".
@@ -680,6 +711,21 @@ tasks.sonar { dependsOn("check") }
 // "app/gradle.properties" so it is declared exactly once.
 springBoot { mainClass.set(gradleProperty("mainClass")) }
 
+// Local runs activate the "local" profile from
+// "src/main/resources/application-local.yml", which raises logging.level.root
+// from the default "error" to "info".
+//
+// NOTE: without this, a plain "./gradlew bootRun" prints the Spring banner and
+// then nothing at all -- the banner goes straight to System.out, while every
+// startup message ("Starting App", "Tomcat started on port 8080", "Started App
+// in Xs") is logged at INFO and discarded by the quiet default. A healthy
+// startup then looks indistinguishable from a hang.
+//
+// NOTE: this affects bootRun ONLY. The packaged jar and any deployed run keep
+// the quiet default unless something passes
+// "--spring.profiles.active=local" explicitly.
+tasks.bootRun { systemProperty("spring.profiles.active", "local") }
+
 tasks.bootJar {
     // never package an artifact that has not passed check (tests + spotless)
     dependsOn("check")
@@ -691,4 +737,80 @@ tasks.bootJar {
     // NOTE: Start-Class is not set here either. The Spring Boot plugin writes
     // it from springBoot.mainClass above, and the shared manifest block near
     // the top of this file supplies the remaining attributes.
+}
+
+// ---------------------------------------------------------------------
+// --------------- >>> Docker Image <<< --------------------------------
+// NOTE: this shells out to the "docker" CLI rather than using a Gradle
+// Docker plugin. The shared catalog does expose
+// alias(libs.plugins.docker.remote.api) (com.bmuschko.docker-remote-api),
+// but that plugin drives the Docker Engine REST API, which uses the
+// legacy builder. The Dockerfile here REQUIRES BuildKit -- the "# syntax"
+// directive, "--mount=type=secret" for the GitHub Packages credentials
+// and "--mount=type=cache" for the Gradle home. On the legacy builder the
+// secret mounts simply do not exist, so Gradle inside the container would
+// fail to resolve the version catalog with an HTTP 401.
+//
+// NOTE: deliberately NOT wired to "bootJar" or "build". The Dockerfile
+// compiles the application inside its own builder stage, so depending on
+// the host jar would run the entire suite twice -- once on the host and
+// again in the container -- to produce an artifact the image never uses.
+//
+// NOTE: also deliberately not a dependency of "build". A container image
+// is not part of the normal verification loop, and wiring it in would
+// make every "./gradlew build" require a running Docker daemon.
+// ---------------------------------------------------------------------
+// https://docs.docker.com/build/building/secrets/
+
+// Both tags come from the same properties the jar and the POM use, so the
+// image coordinate is never a second source of truth.
+val dockerImageTag = "${gradleProperty("artifactId")}:$version"
+val dockerLocalTag = "${gradleProperty("artifactId")}:local"
+
+tasks.register<Exec>("dockerBuild") {
+    group = "docker"
+    description = "Builds the Docker image from the Dockerfile in the root directory."
+
+    // The build context is the repository root, not this subproject.
+    workingDir = rootDir
+
+    // Docker 23+ defaults to BuildKit, but an older client or a
+    // DOCKER_BUILDKIT=0 in the environment would silently fall back to the
+    // legacy builder and drop the secret mounts, so pin it.
+    environment("DOCKER_BUILDKIT", "1")
+
+    commandLine(
+        "docker",
+        "build",
+        "--secret",
+        "id=github_user,env=GITHUB_USER",
+        "--secret",
+        "id=github_token,env=GITHUB_TOKEN",
+        "--build-arg",
+        "APP_VERSION=$version",
+        "--tag",
+        dockerImageTag,
+        "--tag",
+        dockerLocalTag,
+        ".",
+    )
+
+    // Checked at execution rather than configuration time so that merely
+    // running "./gradlew tasks" does not fail on a machine without
+    // credentials exported.
+    doFirst {
+        val missing =
+            listOf("GITHUB_USER", "GITHUB_TOKEN").filter { System.getenv(it).isNullOrBlank() }
+
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "${missing.joinToString(" and ")} must be exported before running " +
+                    "dockerBuild. The image build resolves the shared " +
+                    "'com.rubensgomes:gradle-catalog' version catalog from GitHub " +
+                    "Packages inside its builder stage, which always starts from a " +
+                    "cold Gradle cache and therefore cannot fall back to local " +
+                    "artifacts.",
+            )
+        }
+    }
 }

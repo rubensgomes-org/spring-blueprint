@@ -2,5 +2,5 @@
 # Manual edits can break the build and are not advised.
 # This file is expected to be part of source control.
 # To regenerate this file, run: ./gradlew dependencies --write-locks
-com.rubensgomes:gradle-catalog:0.2.1=incomingCatalogForLibs0
+com.rubensgomes:gradle-catalog:0.2.7=incomingCatalogForLibs0
 empty=
