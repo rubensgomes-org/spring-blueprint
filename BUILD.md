@@ -287,6 +287,30 @@ curl http://localhost:8080/nope
 This changes the error *representation* only. An unmapped path still returns
 404 — it just returns it in a form a REST client can parse.
 
+The `/error` mapping enumerates its HTTP methods explicitly — `GET`, `HEAD`,
+`POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` — rather than relying on the
+`@RequestMapping` default, which silently accepts everything including `TRACE`.
+
+> **Do not narrow that list to `GET`.** It looks like an obvious tightening and
+> it breaks error handling. The container forwards the *original* request method
+> when it dispatches to `/error`, so a request that failed as a POST arrives as a
+> POST. With a GET-only mapping, every non-GET failure returns
+> `405 Method Not Allowed` instead of the status it actually caused — a client
+> POSTing to a mistyped URL would be told its method was wrong rather than that
+> the path does not exist.
+>
+> `TRACE` is the one deliberate omission: the application never serves it, and
+> echoing a request back is a cross-site tracing liability.
+
+Note that the unit tests call `handleError` directly and never exercise the
+mapping, so they would **not** catch a regression in that method list. Verify it
+against a running server:
+
+```bash
+for m in GET POST PUT PATCH DELETE; do curl -s -o /dev/null -w "$m %{http_code}\n" -X $m localhost:8080/nope; done
+# every line should read 404, not 405
+```
+
 To run the packaged executable jar instead:
 
 ```bash
