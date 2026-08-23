@@ -461,6 +461,24 @@ twice to produce an artifact the image never uses. It is deliberately not a
 dependency of `build` either, so an ordinary `./gradlew build` never requires a
 Docker daemon.
 
+### Image version labels
+
+The two build paths stamp `org.opencontainers.image.version` differently:
+
+| Built with | Tags | `image.version` label |
+|---|---|---|
+| `./gradlew dockerBuild` | `<artifactId>:<version>` and `<artifactId>:local` | the real project version |
+| `docker compose build` | `<artifactId>:local` | `unknown` |
+
+That asymmetry is intentional. `APP_VERSION` used to be hardcoded in
+`docker-compose.yml`, which made it a second source of truth for the project
+version — and it went stale the first time the release plugin bumped the
+version. Compose now passes nothing and inherits the Dockerfile's `unknown`
+default, which is honest; `dockerBuild` reads the version from
+`app/gradle.properties`, so it cannot drift.
+
+Use `./gradlew dockerBuild` for anything you intend to publish or keep.
+
 The shared catalog does expose `com.bmuschko.docker-remote-api`, but that plugin
 drives the Docker Engine REST API, which uses the **legacy builder**. This
 Dockerfile requires BuildKit for its `--mount=type=secret` credentials, and on
