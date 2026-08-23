@@ -60,20 +60,22 @@ public class GlobalErrorController implements ErrorController {
    * Builds the JSON error body from the request attributes the container populated before
    * forwarding here.
    *
+   * <p>Accepts every HTTP method except {@code TRACE}, and <strong>that breadth is
+   * deliberate</strong>. The container forwards the <em>original</em> request method when it
+   * dispatches to {@code /error}, so a request that failed as a POST arrives here as a POST.
+   * Narrowing this mapping to {@code GET} would make every non-GET failure return {@code 405 Method
+   * Not Allowed} instead of the status it actually caused: a client POSTing to a mistyped URL would
+   * be told its method was wrong rather than that the path does not exist.
+   *
+   * <p>{@code TRACE} is the one deliberate omission. The application never serves it, and echoing a
+   * request back is a well-known cross-site tracing liability.
+   *
    * @param request the forwarded request carrying the {@code jakarta.servlet.error.*} attributes
    * @return the error body, with the same HTTP status the original request failed with
    */
-  // NOTE: the accepted methods are listed explicitly rather than left to the
-  // @RequestMapping default, which silently accepts every method including TRACE.
-  //
-  // The list is broad on purpose. The container forwards the ORIGINAL request
-  // method when it dispatches to "/error", so a failed POST arrives here as a
-  // POST. Narrowing this to GET would make every non-GET failure return 405
-  // instead of the intended status -- a client POSTing to a mistyped URL would
-  // get "405 Method Not Allowed" rather than the 404 it actually caused.
-  //
-  // TRACE is the one deliberate omission: the application never serves it, and
-  // echoing a request back is a well-known cross-site tracing liability.
+  // NOTE: the methods are enumerated rather than left to the @RequestMapping
+  // default, which silently accepts every method including TRACE. Do not narrow
+  // this list -- see the Javadoc above for why it has to stay broad.
   @RequestMapping(
       path = ERROR_PATH,
       method = {
