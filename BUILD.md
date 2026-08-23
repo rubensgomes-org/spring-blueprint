@@ -12,6 +12,7 @@ and when it runs.
 - [Verification](#verification)
 - [Code formatting](#code-formatting)
 - [Artifacts](#artifacts)
+- [Docker](#docker)
 - [Publishing](#publishing)
 - [Releasing](#releasing)
 - [Static analysis](#static-analysis)
@@ -30,6 +31,9 @@ and when it runs.
 | `./gradlew publishToMavenLocal` | Install into `~/.m2/repository` |
 | `./gradlew clean` | Delete `app/build/` |
 | `./gradlew :app:dependencies --write-locks` | Regenerate the dependency lock files |
+| `./gradlew dockerBuild` | Build the Docker image (requires a running daemon) |
+| `docker compose up --build -d` | Build and run the container |
+| `docker compose down` | Stop and remove the container |
 
 Always use the wrapper (`./gradlew`), never a locally installed `gradle`. The
 wrapper pins **Gradle 9.7.0**.
@@ -123,7 +127,7 @@ which fails with an actionable message when a property is missing.
 ### The `libs` version catalog — dependency versions
 
 `libs` is **not** a local `gradle/libs.versions.toml`. It resolves from the
-published catalog `com.rubensgomes:gradle-catalog:0.2.1`, wired up in
+published catalog `com.rubensgomes:gradle-catalog:0.2.7`, wired up in
 `settings.gradle.kts`. It is the single source of truth for every plugin and
 library version, including Spring Boot (currently **4.1.1**).
 
@@ -215,6 +219,41 @@ an automated build: it would rewrite the lock state to match whatever resolved
 at that moment, which is precisely the unpredictability locking exists to
 prevent.
 
+### Spring profiles — three YAML files
+
+| File | Profile | Activated by |
+|---|---|---|
+| `application.yml` | default | always |
+| `application-local.yml` | `local` | `tasks.bootRun` sets `spring.profiles.active` |
+| `application-docker.yml` | `docker` | `SPRING_PROFILES_ACTIVE`, baked into the image |
+
+The default profile pins `logging.level.root` to `error` so a deployed service
+stays quiet. That also discards Spring Boot's own startup messages — `Starting
+App`, `Tomcat started on port 8080`, `Started App in Xs` — leaving only the ASCII
+banner, which is written straight to `System.out` rather than through SLF4J. The
+result looks exactly like a hang.
+
+Both `local` and `docker` exist primarily to raise `root` back to `info`. If you
+add a profile of your own and it appears to start silently, this is why.
+
+> **Note** — `logging.level.com.rubensgomes.blueprint` is set to `trace` in the
+> default profile. It must match the real package; an out-of-date value here
+> silently falls back to `root`.
+
+### Resource filtering — `@artifactId@`
+
+`spring.application.name` in `application.yml` is the literal token
+`@artifactId@`, replaced at `processResources` time with the `artifactId`
+property from `app/gradle.properties`. Editing the literal has no effect —
+change `artifactId` instead.
+
+`ReplaceTokens` with `@...@` delimiters is used rather than Gradle's `expand()`,
+because `expand()` evaluates `${...}` through the Groovy template engine — the
+same syntax Spring uses for its own placeholders. A future
+`${DB_HOST:localhost}` would break the build or be silently substituted away.
+The filter applies to `application*.yml`, so every profile file passes through
+it.
+
 ## Running the application
 
 ```bash
@@ -230,7 +269,23 @@ curl http://localhost:8080/api/v1/helloworld
 Actuator is on the classpath for health and metrics endpoints. Spring Boot
 DevTools is active under `bootRun` for automatic restart, and is excluded from
 the packaged jar. Runtime configuration lives in
-`app/src/main/resources/application.yml`.
+`app/src/main/resources/application.yml`, with `application-local.yml` layered
+on top — `bootRun` activates the `local` profile automatically.
+
+### Error responses
+
+Every failed request returns JSON, not Spring Boot's Whitelabel HTML page.
+`GlobalErrorController` implements `ErrorController` and maps `/error`, which the
+servlet container forwards to after any `sendError`, so one handler covers 404s,
+validation 400s and unhandled 500s alike:
+
+```bash
+curl http://localhost:8080/nope
+# {"timestamp":"...","status":404,"error":"Not Found","message":"...","path":"/nope"}
+```
+
+This changes the error *representation* only. An unmapped path still returns
+404 — it just returns it in a form a REST client can parse.
 
 To run the packaged executable jar instead:
 
@@ -379,6 +434,125 @@ image with Cloud Native Buildpacks:
 ```bash
 ./gradlew bootBuildImage
 ```
+
+For the hand-written multi-stage image, see the next section — it consumes those
+layers directly.
+
+## Docker
+
+```bash
+docker compose up --build -d      # build and start
+docker compose logs -f app        # follow logs
+docker compose ps                 # check health
+docker compose down               # stop and remove
+```
+
+There is also a Gradle entry point, useful when CI wants a single `./gradlew`
+invocation to be the whole pipeline:
+
+```bash
+./gradlew dockerBuild      # tags <artifactId>:<version> and <artifactId>:local
+```
+
+It is a plain `Exec` task shelling out to the `docker` CLI. It deliberately does
+**not** depend on `bootJar`, because the Dockerfile compiles the application in
+its own builder stage — depending on the host jar would run the whole suite
+twice to produce an artifact the image never uses. It is deliberately not a
+dependency of `build` either, so an ordinary `./gradlew build` never requires a
+Docker daemon.
+
+The shared catalog does expose `com.bmuschko.docker-remote-api`, but that plugin
+drives the Docker Engine REST API, which uses the **legacy builder**. This
+Dockerfile requires BuildKit for its `--mount=type=secret` credentials, and on
+the legacy builder those mounts do not exist — Gradle inside the container would
+fail on the version catalog with an HTTP 401. Hence the CLI shell-out.
+
+`GITHUB_USER` and `GITHUB_TOKEN` must be exported first. They are the same
+credentials the Gradle build needs, passed through as **BuildKit secrets** —
+build-time only, never written into an image layer or `docker history`.
+
+### The three stages
+
+| Stage | Base | Does |
+|---|---|---|
+| `builder` | `amazoncorretto:25` | Runs `./gradlew :app:bootJar` |
+| `extractor` | `eclipse-temurin:25-jre-alpine` | Explodes the layered jar |
+| `runtime` | `eclipse-temurin:25-jre-alpine` | Non-root JRE image |
+
+**The builder installs `findutils`.** `amazoncorretto:25` is Amazon Linux 2023
+*minimal* and ships neither `xargs` nor `find`. The Gradle wrapper script
+hard-requires `xargs` and aborts with `xargs is not available` before doing
+anything else. Do not remove that `dnf install`.
+
+**Why Corretto for the builder.** The build pins
+`vendor = JvmVendorSpec.AMAZON` alongside `languageVersion = 25`. Gradle treats
+the JVM running Gradle as a toolchain candidate, and this base satisfies the
+spec, so the foojay resolver never fires. A Temurin or `gradle:*` builder would
+download a second ~200 MB JDK on every cold build. The Dockerfile also passes
+`-Porg.gradle.java.installations.auto-download=false`, so if the base image is
+ever changed to a non-Corretto one the build fails in seconds with "No matching
+toolchain" rather than silently paying that download on every run.
+
+**Why alpine for the runtime.** busybox supplies `wget` for the `HEALTHCHECK` at
+no extra size; the Ubuntu-based Temurin JRE images ship neither `wget` nor
+`curl` and would need an `apt-get` layer. A JRE cannot run a single-file
+source-launch probe instead, because it has no compiler.
+
+**Layer extraction.** Spring Boot 4 **removed** the `layertools` jarmode. The
+jar bundles `spring-boot-jarmode-tools`, so extraction is:
+
+```bash
+java -Djarmode=tools -jar application.jar extract --layers --launcher --destination ...
+```
+
+The runtime stage copies the four layers least-churn-first —
+`dependencies`, `spring-boot-loader`, `snapshot-dependencies`, `application`.
+Boot writes constant 1980 timestamps, so the ~23 MB `dependencies` layer is
+byte-identical between builds and registries deduplicate it. This buys push and
+pull efficiency, not local build time: any source change still recompiles.
+
+### Verification runs inside the image build
+
+`tasks.bootJar` depends on `check`, so `docker build` runs spotless, the full
+JUnit suite, and the 90% line/branch coverage gate. That is deliberate — the
+image cannot be built from code that has not passed verification. It is also why
+`app/src/test` and `.editorconfig` are in the build context.
+
+For iterating on the Dockerfile itself:
+
+```bash
+docker build --build-arg GRADLE_BUILD_ARGS="-x check" ...
+```
+
+`-x check` prunes the entire verification subgraph. The default is empty, and CI
+must never set it.
+
+### The `docker` profile
+
+`app/src/main/resources/application-docker.yml` is activated by
+`SPRING_PROFILES_ACTIVE=docker`, which the image bakes in as a default. It
+exists mainly to raise `logging.level.root` from the default `error` to `info` —
+without it a container prints the Spring banner and then nothing at all, which
+is indistinguishable from a hang. It also pins ANSI output off and enables the
+`/actuator/health/liveness` and `/actuator/health/readiness` probes.
+
+Anything that varies per deployment — published port, memory limits,
+credentials — belongs in `docker-compose.yml`, not in that file.
+
+### Runtime notes
+
+- The `ENTRYPOINT` is exec form, so the JVM is PID 1 and `docker stop` delivers
+  SIGTERM straight to it, triggering `server.shutdown: graceful`. Wrapping it in
+  `sh -c` to expand a `$JAVA_OPTS` would make `sh` PID 1, and `sh` does not
+  forward SIGTERM — graceful shutdown would silently become a 10s SIGKILL.
+  `JDK_JAVA_OPTIONS` provides that configurability without a shell.
+- `-XX:MaxRAMPercentage=75.0` is meaningless without a container memory limit;
+  without one it computes 75% of host RAM. That flag and the compose memory
+  limit are a package deal.
+- `-XX:+UseG1GC` is explicit because the JVM only auto-selects G1 at 2+ CPUs
+  **and** 1792 MB+; at the 1g compose limit it would otherwise pick SerialGC.
+- Setting `JDK_JAVA_OPTIONS` in compose **replaces** the image's value rather
+  than appending to it.
 
 ## Publishing
 

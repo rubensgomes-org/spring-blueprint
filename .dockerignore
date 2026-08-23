@@ -1,0 +1,60 @@
+# Files excluded from the Docker build context.
+#
+# The Dockerfile uses explicit COPY paths rather than "COPY . .", so this file
+# governs what BuildKit transfers and hashes on every build rather than what
+# lands in the image. Keeping it tight still matters: the context is synced on
+# each build, and "app/build" alone is ~50 MB of jars.
+#
+# NOTE: do NOT add any of these -- the build breaks without them:
+#   gradlew, gradle/wrapper/gradle-wrapper.jar, settings.gradle.kts,
+#   gradle.properties, app/gradle.properties, app/build.gradle.kts,
+#   .editorconfig (spotless reads it), all three *.lockfile files, and
+#   app/src/test (bootJar depends on check, which runs the suite).
+
+# ---------- Gradle output and caches ----------
+# Rebuilt inside the image; machine-specific and large.
+build/
+app/build/
+.gradle/
+app/.gradle/
+
+# ---------- Git metadata ----------
+# Verified safe to exclude: ":app:bootJar" was run against a copy of this
+# repository with no .git directory and succeeded. The release plugin touches
+# git only when the "release" task runs, which a container build never does.
+.git/
+.gitignore
+.gitattributes
+
+# ---------- IDE and OS ----------
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+out/
+bin/
+.DS_Store
+
+# ---------- Docs and repo furniture ----------
+# Not needed to compile or test.
+*.md
+LICENSE
+llms.txt
+misc/
+commands/
+.github/
+
+# ---------- Local credentials ----------
+# GitHub Packages auth is supplied via BuildKit secrets, never the context.
+.env
+*.env
+.secrets/
+*.pem
+*.key
+*.p12
+
+# ---------- Docker's own files ----------
+Dockerfile
+.dockerignore
+docker-compose*.yml

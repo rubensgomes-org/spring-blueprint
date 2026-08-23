@@ -1,0 +1,102 @@
+## Local container run for the spring-blueprint application.
+##
+##   docker compose up --build -d     bring it up
+##   docker compose logs -f app       follow the logs
+##   docker compose ps                check health
+##   docker compose down              tear it down
+##
+## GITHUB_USER and GITHUB_TOKEN must be exported in your shell: they are
+## passed to the build as BuildKit secrets so Gradle can resolve the shared
+## version catalog from GitHub Packages. They are build-time only and never
+## enter an image layer.
+##
+## NOTE: the "version" key is obsolete under the Compose Specification and
+## Compose v2 warns about it. "name" fixes the project name so container and
+## network names do not depend on the checkout directory.
+## https://docs.docker.com/reference/compose-file/
+name: spring-blueprint
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: "0.0.4-SNAPSHOT"
+      ## Maps to "--mount=type=secret,id=github_user" in the Dockerfile.
+      secrets:
+        - github_user
+        - github_token
+    image: "spring-blueprint:local"
+    container_name: spring-blueprint
+
+    environment:
+      ## Also baked into the image; restated so the wiring is visible here.
+      ## Selects application-docker.yml, which restores INFO logging -- the
+      ## default profile pins logging.level.root to "error", which would leave
+      ## "docker logs" showing the banner and nothing else.
+      SPRING_PROFILES_ACTIVE: "docker"
+      TZ: "UTC"
+      ## NOTE: this REPLACES the image's JDK_JAVA_OPTIONS rather than adding to
+      ## it, so it repeats the flags that are still wanted.
+      ##
+      ## UseG1GC is explicit on purpose. The JVM only auto-selects G1 when it
+      ## sees at least 2 CPUs AND at least 1792 MB; at the 1g limit below it
+      ## would otherwise silently fall back to SerialGC.
+      JDK_JAVA_OPTIONS: >-
+        -XX:MaxRAMPercentage=75.0
+        -XX:+ExitOnOutOfMemoryError
+        -XX:+UseG1GC
+        -Duser.timezone=UTC
+
+    ports:
+      - "8080:8080"
+
+    ## Duplicates the image's HEALTHCHECK so the contract is visible at the
+    ## orchestration layer and can be tuned without a rebuild. Delete this
+    ## block to inherit the image's definition instead.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/actuator/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+
+    ## spring.lifecycle.timeout-per-shutdown-phase is 5s; this leaves room for
+    ## that phase plus the remaining JVM shutdown hooks before SIGKILL.
+    stop_grace_period: 15s
+
+    ## NOTE: Docker Engine restart policies react to process exit, not to
+    ## health status -- an "unhealthy" container is not restarted outside
+    ## Swarm or Kubernetes. -XX:+ExitOnOutOfMemoryError above is what turns an
+    ## OOM into a restartable exit.
+    restart: unless-stopped
+
+    ## Hardening. The application writes nothing outside java.io.tmpdir;
+    ## embedded Tomcat's base dir and hsperfdata both live under /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1g
+        reservations:
+          memory: 512m
+
+## Sourced from the host environment at compose time. If your Compose version
+## rejects the "environment" provider, switch to:
+##   github_token:
+##     file: ./.secrets/github_token
+## and add .secrets/ to .gitignore and .dockerignore.
+secrets:
+  github_user:
+    environment: GITHUB_USER
+  github_token:
+    environment: GITHUB_TOKEN

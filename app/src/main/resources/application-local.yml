@@ -1,0 +1,18 @@
+############################ local #############################################
+## Local development profile, activated automatically by "./gradlew bootRun"
+## (see the Spring Boot plugin section of "app/build.gradle.kts"). It is
+## packaged into the jar but never active in a deployed run unless something
+## explicitly asks for it with "--spring.profiles.active=local".
+##
+## The default profile keeps "logging.level.root" at "error" so a deployed
+## service stays quiet. That also suppresses Spring Boot's own startup
+## messages -- "Starting App", "Tomcat started on port 8080", "Started App in
+## Xs" -- which are all logged at INFO. Only the ASCII banner survives, because
+## it is written straight to System.out rather than through SLF4J, which makes
+## a healthy startup look like a hang. This profile restores those messages.
+## https://docs.spring.io/spring-boot/reference/features/profiles.html
+
+## --------------- >>> logging <<< --------------------------------------------
+logging:
+  level:
+    root: "info"

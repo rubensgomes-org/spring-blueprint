@@ -1,7 +1,7 @@
 ############################ test ###########################################
 logging:
   level:
-    com.rubensgomes.sample: "trace"
+    com.rubensgomes.blueprint: "trace"
     org.springframework: "info"
 local:
   server:

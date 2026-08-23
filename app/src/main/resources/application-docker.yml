@@ -1,0 +1,49 @@
+############################ docker ############################################
+## Container profile, activated by SPRING_PROFILES_ACTIVE=docker. The image
+## sets that as a default ENV and "docker-compose.yml" sets it again so the
+## wiring is visible at the orchestration layer.
+##
+## Only settings true of EVERY containerised run belong here. Anything that
+## varies per deployment -- published port, memory limits, credentials,
+## external URLs -- belongs in "docker-compose.yml" or the orchestrator.
+## Nothing secret belongs here at all: this file is baked into the jar.
+## https://docs.spring.io/spring-boot/reference/features/profiles.html
+
+## --------------- >>> logging <<< --------------------------------------------
+## The default profile pins "logging.level.root" to "error", which discards
+## every INFO startup message -- "Starting App", "Tomcat started on port 8080",
+## "Started App in Xs". In a container that leaves "docker logs" showing the
+## ASCII banner and then nothing at all, which is indistinguishable from a hang
+## and leaves the HEALTHCHECK as the only evidence the app is alive. This
+## restores them, exactly as "application-local.yml" does for "bootRun".
+logging:
+  level:
+    root: "info"
+
+spring:
+  ## Container stdout is a pipe read by the Docker log driver, never a
+  ## terminal, so DETECT already resolves to "no colour". Pinning "never"
+  ## guarantees no ANSI escape bytes reach a log aggregator even when someone
+  ## runs with "docker run -t".
+  output:
+    ansi:
+      enabled: "never"
+
+## --------------- >>> management <<< -----------------------------------------
+## Actuator already web-exposes only "health" by default. Restating it means a
+## later change to the default profile cannot silently widen the surface of a
+## published image.
+##
+## "probes.enabled" adds /actuator/health/liveness and /actuator/health/
+## readiness. The container HEALTHCHECK deliberately targets plain
+## /actuator/health; the probe endpoints are there for a future orchestrator.
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: "never"
+  endpoints:
+    web:
+      exposure:
+        include: "health"

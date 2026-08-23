@@ -2,7 +2,11 @@
 ## https://docs.spring.io/spring-boot/appendix/application-properties/index.html#appendix.application-properties.data
 spring:
   application:
-    name: "sample-java-app"
+    # Replaced at processResources time with the "artifactId" property from
+    # "app/gradle.properties" -- see the Resource Filtering section of
+    # "app/build.gradle.kts". Editing this literal has no effect; change
+    # artifactId instead.
+    name: "@artifactId@"
   # disable docker compose up when running ./gradlew bootRun
   docker:
     compose:
@@ -20,7 +24,13 @@ logging:
   group:
     tomcat: "org.apache.catalina,org.apache.coyote,org.apache.tomcat"
   level:
-    com.rubensgomes.sample: "trace"
+    # The application's own package. This was "com.rubensgomes.sample" -- a
+    # package that does not exist here -- so the level below applied to
+    # nothing and the app's own log statements fell back to "root".
+    com.rubensgomes.blueprint: "trace"
+    # Quiet by default so a deployed service does not log at INFO. Local runs
+    # raise this via the "local" profile in "application-local.yml", which
+    # "bootRun" activates automatically.
     root: "error"
     tomcat: "warn"
     # spring boot "logging.group.web"
