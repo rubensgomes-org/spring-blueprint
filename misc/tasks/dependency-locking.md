@@ -241,6 +241,9 @@ Three assumptions in the approved plan did not survive contact:
   this build has one.
 - CI enforcement — no `.github/` exists in this repository yet. When CI is
   added, it must never pass `--write-locks`.
+  **Update (2026-08-23):** CI now exists —
+  `.github/workflows/build-verify.yml`. It does not pass `--write-locks`
+  anywhere, and the workflow carries a comment saying it never should.
 
 ### Follow-ups not actioned
 

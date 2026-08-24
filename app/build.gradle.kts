@@ -276,12 +276,15 @@ java {
     // publish "-sources" and "-javadoc" jars alongside the main artifact
     withSourcesJar()
     withJavadocJar()
-    // Compile and test against a Java 25 Amazon Corretto toolchain,
-    // independent of the JDK running Gradle itself. The toolchain is
-    // auto-provisioned by the foojay resolver applied in settings.gradle.kts.
+    // Compile and test against a Java 25 Microsoft Build of OpenJDK
+    // toolchain, independent of the JDK running Gradle itself. The toolchain
+    // is auto-provisioned by the foojay resolver applied in
+    // settings.gradle.kts. NOTE: the Dockerfile builder stage is pinned to a
+    // Microsoft base image to match this vendor; changing the vendor here
+    // requires changing that base image too.
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(25))
-        vendor.set(JvmVendorSpec.AMAZON)
+        vendor.set(JvmVendorSpec.MICROSOFT)
     }
 }
 

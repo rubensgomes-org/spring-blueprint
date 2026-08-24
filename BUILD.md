@@ -36,7 +36,7 @@ and when it runs.
 | `docker compose down` | Stop and remove the container |
 
 Always use the wrapper (`./gradlew`), never a locally installed `gradle`. The
-wrapper pins **Gradle 9.7.0**.
+wrapper pins **Gradle 9.7.1**.
 
 There is one subproject, `app`, and the root project has no build script, so
 `./gradlew build` and `./gradlew :app:build` are equivalent. The examples below
@@ -47,15 +47,19 @@ use the short form.
 | Requirement | Detail |
 |---|---|
 | JDK to run Gradle | Any recent JDK; it does not have to match the toolchain |
-| Build toolchain | **Java 25, Amazon Corretto** — auto-downloaded by Gradle, no manual install |
+| Build toolchain | **Java 25, Microsoft Build of OpenJDK** — auto-downloaded by Gradle, no manual install |
 | `GITHUB_USER` / `GITHUB_TOKEN` | Required to resolve dependencies on a cold cache, and to publish |
 | `SONAR_TOKEN` | Required only by the `sonar` task |
 
-The Java 25 Corretto toolchain is declared in `app/build.gradle.kts` and
+The Java 25 Microsoft toolchain is declared in `app/build.gradle.kts` and
 provisioned automatically by the foojay resolver applied in
 `settings.gradle.kts`. Gradle downloads it into `~/.gradle/jdks/` on first use.
 Compilation and tests run on that toolchain regardless of which JDK started
 Gradle, so builds are reproducible across machines.
+
+The vendor is pinned to `JvmVendorSpec.MICROSOFT`, not left open. Changing it
+also means changing the Docker builder base image, which is deliberately chosen
+to satisfy this same spec — see [Docker](#docker).
 
 ### GitHub Packages credentials
 
@@ -78,14 +82,16 @@ with an unexplained HTTP 401.
 spring-blueprint/
 ├── settings.gradle.kts        # project inclusion, repositories, version catalog
 ├── settings-gradle.lockfile   # lock state: version catalog resolution
-├── gradle.properties          # developer identity, license, Sonar, Gradle daemon
+├── gradle.properties          # developer identity, license, SCM, Sonar, Gradle daemon
 ├── BUILD.md                   # this file
 ├── .editorconfig              # ktlint rules for *.gradle.kts
+├── .github/workflows/
+│   └── build-verify.yml       # CI: compile, test, check, sonar on push to main
 └── app/
     ├── build.gradle.kts       # the entire build
     ├── gradle.lockfile        # lock state: application dependencies
     ├── buildscript-gradle.lockfile  # lock state: plugin classpath
-    ├── gradle.properties      # coordinates, version, SCM
+    ├── gradle.properties      # coordinates, version
     └── src/{main,test}/...
 ```
 
@@ -104,7 +110,6 @@ three sources.
 | `title` | `Specification-Title` manifest attribute, POM `<name>` |
 | `description` | POM `<description>` |
 | `mainClass` | Spring Boot entry point (`Start-Class`) |
-| `scmConnection`, `scmUrl` | POM `<scm>` |
 
 ### `gradle.properties` (root) — identity shared across projects
 
@@ -113,7 +118,8 @@ three sources.
 | `developerId`, `developerName`, `developerEmail` | Jar manifest, POM `<developers>` |
 | `license`, `licenseUrl` | POM `<licenses>` |
 | `mavenRepoPackages` | GitHub Packages URL, for both resolving and publishing |
-| `sonar.*` | SonarCloud coordinates |
+| `scmConnection`, `scmUrl` | POM `<scm>`, and the published POM `<url>` |
+| `sonar.*` | SonarCloud coordinates and quality-gate behaviour |
 | `org.gradle.*` | Daemon and logging behaviour |
 
 Read these with the `gradleProperty(name)` helper in `app/build.gradle.kts`,
@@ -517,23 +523,32 @@ build-time only, never written into an image layer or `docker history`.
 
 | Stage | Base | Does |
 |---|---|---|
-| `builder` | `amazoncorretto:25` | Runs `./gradlew :app:bootJar` |
+| `builder` | `mcr.microsoft.com/openjdk/jdk:25-ubuntu` | Runs `./gradlew :app:bootJar` |
 | `extractor` | `eclipse-temurin:25-jre-alpine` | Explodes the layered jar |
 | `runtime` | `eclipse-temurin:25-jre-alpine` | Non-root JRE image |
 
-**The builder installs `findutils`.** `amazoncorretto:25` is Amazon Linux 2023
-*minimal* and ships neither `xargs` nor `find`. The Gradle wrapper script
-hard-requires `xargs` and aborts with `xargs is not available` before doing
-anything else. Do not remove that `dnf install`.
+**Why a Microsoft base for the builder.** The build pins
+`vendor = JvmVendorSpec.MICROSOFT` alongside `languageVersion = 25`. Gradle
+treats the JVM running Gradle as a toolchain candidate, and this base reports
+`java.vendor` `Microsoft`, so the spec is satisfied by the JVM already in the
+image and the foojay resolver never fires. A Temurin, Corretto or `gradle:*`
+builder would download a second ~200 MB JDK on every cold build. The Dockerfile
+also passes `-Porg.gradle.java.installations.auto-download=false`, so if the
+base image is ever changed to a non-Microsoft one the build fails in seconds
+with "No matching toolchain" rather than silently paying that download on every
+run.
 
-**Why Corretto for the builder.** The build pins
-`vendor = JvmVendorSpec.AMAZON` alongside `languageVersion = 25`. Gradle treats
-the JVM running Gradle as a toolchain candidate, and this base satisfies the
-spec, so the foojay resolver never fires. A Temurin or `gradle:*` builder would
-download a second ~200 MB JDK on every cold build. The Dockerfile also passes
-`-Porg.gradle.java.installations.auto-download=false`, so if the base image is
-ever changed to a non-Corretto one the build fails in seconds with "No matching
-toolchain" rather than silently paying that download on every run.
+**The toolchain vendor and the builder base are one decision.** Changing
+`vendor` in `app/build.gradle.kts` without changing `FROM` in the Dockerfile
+breaks `docker build` while leaving host builds green, because the host has the
+foojay resolver available and the builder stage deliberately does not.
+
+**The builder needs no `findutils` install.** The Gradle wrapper hard-requires
+`xargs` and aborts with `xargs is not available` before doing anything else, and
+the jar-selection step uses `find`. The Ubuntu-based Microsoft image ships both
+already — unlike the Amazon Linux *minimal* images, which shipped neither and
+needed an explicit `dnf install`. Do not move to a slimmer base such as
+`25-distroless` without re-checking both tools.
 
 **Why alpine for the runtime.** busybox supplies `wget` for the `HEALTHCHECK` at
 no extra size; the Ubuntu-based Temurin JRE images ship neither `wget` nor
@@ -669,9 +684,98 @@ export SONAR_TOKEN=<token>
 Depends on `check`, so tests and the coverage report always precede analysis.
 The `sonarqube` task is a deprecated alias for `sonar`.
 
-> **Note** — `sonar.projectKey` and `sonar.organization` in the root
-> `gradle.properties` are the placeholders `@SONAR_PROJECT_KEY@` and
-> `@SONAR_ORGANIZATION@`. Substitute real values before analysis is meaningful.
+All coordinates live in the root `gradle.properties`:
+
+| Property | Value |
+|---|---|
+| `sonar.host.url` | `https://sonarcloud.io` |
+| `sonar.organization` | `rubensgomes-org` |
+| `sonar.projectKey` | `rubensgomes-org_spring-blueprint` |
+| `sonar.projectName` | `spring-blueprint` |
+| `sonar.qualitygate.wait` | `true` |
+
+`sonar.qualitygate.wait=true` makes `sonar` **block** after uploading, poll
+until SonarCloud finishes processing, and then fail the build when the quality
+gate fails. The default is `false`, where the task succeeds the moment the
+upload is accepted and a failing gate is something you only find out about in
+the SonarCloud UI. The cost of the stricter setting: the task now takes as long
+as server-side analysis, and `SONAR_TOKEN` must be able to read gate status, not
+just submit.
+
+Cloning this project as a template means replacing `sonar.organization`,
+`sonar.projectKey`, and `sonar.projectName` with your own.
+
+## Continuous integration
+
+`.github/workflows/build-verify.yml` runs the same gate on every push to `main`,
+through the committed wrapper, so CI and a workstation execute identical Gradle.
+
+One job, `build-verify`, on `ubuntu-latest`. Three setup steps, then the four
+verification phases:
+
+| Step | Command | What it adds |
+|---|---|---|
+| `compile` | `:app:classes :app:testClasses` | `processResources`, `compileJava`, `compileTestJava` |
+| `test` | `:app:test` | `test`, `jacocoTestReport` |
+| `check` | `:app:check` | `spotless*Check`, `jacocoTestCoverageVerification` |
+| `sonar` | `:app:sonar` | `sonarResolver`, `sonar` |
+
+### Why four invocations instead of one
+
+`sonar` already depends on `check`, which depends on `test`, so `./gradlew
+:app:sonar` alone would run everything. Splitting it gives four independently
+red/green steps, so a failure names a phase instead of burying it in one 23-task
+log.
+
+It is not wasteful. All four steps share a workspace and a daemon, and
+up-to-date state persists in `app/.gradle`, not in daemon memory — each step
+finds the previous step's work `UP-TO-DATE` and adds only its own. In
+particular, `test` does **not** re-run during `check`, and Spotless runs once.
+The real cost is configuration time ×4, because the release plugin forces
+`org.gradle.configuration-cache=false`.
+
+### Required secrets
+
+| Secret | Used as | Notes |
+|---|---|---|
+| `RUBENS_PAT_TOKEN` | `GITHUB_TOKEN` | Classic PAT with `read:packages` |
+| `SONAR_TOKEN` | `SONAR_TOKEN` | Must be able to **read quality gate status**, not just submit |
+
+Both are organization-level secrets shared with this repository.
+
+`GITHUB_USER` and `GITHUB_TOKEN` cannot be declared in a workflow `env:` block —
+GitHub reserves the `GITHUB_` prefix. The values therefore ride in
+`PACKAGES_USER` / `PACKAGES_TOKEN` and each step exports the real names into its
+own shell. They are needed by **every** invocation, not just the first, because
+`settings.gradle.kts` reads them while evaluating settings.
+
+### Toolchain and the vendor pin
+
+The workflow installs the JDK with `actions/setup-java`, `distribution:
+microsoft`, `java-version: 25` — matching `JvmVendorSpec.MICROSOFT` so Gradle
+reuses the JVM it is already running on. It then passes
+`-Porg.gradle.java.installations.auto-download=false`, exactly as the Dockerfile
+does, so a drift between the vendor pin and the runner distribution fails in
+seconds with "No matching toolchains" instead of silently downloading a second
+JDK on every run. Expect the runner's preinstalled Temurin JDKs to appear in
+that error as detected-but-rejected — that is the pin working.
+
+Change the vendor in `app/build.gradle.kts` and you must change **three** places
+in step: the toolchain block, the Dockerfile `FROM`, and `distribution:` here.
+
+### Other details worth knowing
+
+- **`fetch-depth: 0`.** SonarCloud derives New Code detection, blame, and issue
+  backdating from git history; a shallow clone degrades analysis silently.
+- **`shell: bash` is pinned** on all four steps. They expand `$GRADLE_ARGS`
+  unquoted and so depend on word splitting — bash splits, zsh does not.
+- **Never add `--write-locks`.** Locking runs in `LockMode.STRICT`; CI's job is
+  to fail on lock drift, not to paper over it.
+- **`cancel-in-progress: false`.** `main` is the verification gate, so every
+  commit gets a verdict rather than only the newest.
+- **The release plugin re-triggers CI.** It pushes two commits per release to
+  `main`, each costing a run and a SonarCloud analysis. The workflow's closing
+  comment carries the `if:` guard to suppress them if that ever matters.
 
 ## Diagnostics
 

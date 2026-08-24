@@ -39,9 +39,9 @@ Then run it either way. Both serve on **port 8080**, so run one at a time.
 ./gradlew bootRun
 ```
 
-No JDK setup required: Gradle downloads the Java 25 Amazon Corretto toolchain on
-first build. DevTools is active, so edits to `src/main` restart the app
-automatically. Activates the `local` profile.
+No JDK setup required: Gradle downloads the Java 25 Microsoft Build of OpenJDK
+toolchain on first build. DevTools is active, so edits to `src/main` restart
+the app automatically. Activates the `local` profile.
 
 ### Option 2 — Docker
 
@@ -127,9 +127,9 @@ Credentials are only ever needed at **build** time; see
 
 | Layer      | Choice                                            |
 |------------|---------------------------------------------------|
-| Language   | Java 25 (Amazon Corretto toolchain)               |
+| Language   | Java 25 (Microsoft Build of OpenJDK toolchain)    |
 | Framework  | Spring Boot 4.1.1 — Web MVC, Actuator, Validation |
-| Build      | Gradle 9.7.0, Kotlin DSL                          |
+| Build      | Gradle 9.7.1, Kotlin DSL                          |
 | Versions   | Shared catalog `com.rubensgomes:gradle-catalog`   |
 | Testing    | JUnit 5, Mockito, AssertJ, Spring Test            |
 | Coverage   | JaCoCo, enforced at 90% line and branch           |
@@ -138,6 +138,7 @@ Credentials are only ever needed at **build** time; see
 | Release    | `net.researchgate.release`                        |
 | Publishing | GitHub Packages                                   |
 | Container  | Multi-stage Docker build on eclipse-temurin JRE   |
+| CI         | GitHub Actions — compile, test, check, sonar      |
 
 Versions are never hard-coded in the build script. Every plugin and library
 resolves through the shared version catalog, and library versions come from the
@@ -255,14 +256,16 @@ spring-blueprint/
 ├── .dockerignore              # build-context exclusions
 ├── settings.gradle.kts        # inclusion, repositories, version catalog
 ├── settings-gradle.lockfile   # lock state: version catalog resolution
-├── gradle.properties          # developer identity, license, Sonar, daemon
+├── gradle.properties          # developer identity, license, SCM, Sonar, daemon
 ├── BUILD.md                   # build documentation
 ├── llms.txt                   # machine-readable project index
+├── .github/workflows/
+│   └── build-verify.yml       # CI: compile, test, check, sonar on push to main
 └── app/
     ├── build.gradle.kts       # the entire build
     ├── gradle.lockfile        # lock state: application dependencies
     ├── buildscript-gradle.lockfile  # lock state: plugin classpath
-    ├── gradle.properties      # coordinates, version, SCM
+    ├── gradle.properties      # coordinates, version
     └── src/
         ├── main/resources/
         │   ├── application.yml             # defaults (quiet: root=error)
@@ -284,13 +287,17 @@ property instead.
 ## Using this as a template
 
 1. Clone, then update `app/gradle.properties` — `artifactId`, `group`,
-   `description`, `title`, `mainClass`, `scmConnection`, `scmUrl`
+   `description`, `title`, `mainClass`
 2. Update `rootProject.name` in `settings.gradle.kts` to match the directory
-3. Replace the SonarCloud placeholders in `gradle.properties`
+3. Update `gradle.properties` — `scmConnection`, `scmUrl`, and the SonarCloud
+   coordinates `sonar.organization`, `sonar.projectKey`, `sonar.projectName`
 4. Rename the `com.rubensgomes.blueprint` package
 5. Delete the `HelloWorld*` classes and their tests
 6. Once your dependencies settle, regenerate the lock files with
    `./gradlew :app:dependencies --write-locks` and commit them
+7. For CI, provide the two secrets `.github/workflows/build-verify.yml` expects —
+   a `read:packages` PAT and a SonarCloud token — and point `distribution:` in
+   its setup-java step at whatever toolchain vendor you pinned
 
 Everything else — toolchain, formatting, coverage gate, publishing, release
 flow — carries over unchanged.
@@ -299,7 +306,8 @@ flow — carries over unchanged.
 
 The laboratory half of this project. Nothing here is committed to a date:
 
-- [ ] CI/CD workflows (GitHub Actions: build, test, publish, release)
+- [x] CI verification (GitHub Actions: compile, test, check, sonar on push to `main`)
+- [ ] CD workflows — publish, release, and deploy from CI
 - [x] Containerisation — multi-stage `Dockerfile` + `docker-compose.yml`
 - [ ] Cloud deployment targets
 - [ ] Persistence layer with a real domain model
