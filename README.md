@@ -16,6 +16,12 @@ It exists for three reasons:
 
 ---
 
+## AI-Assisted Development
+
+This project was developed primarily using AI-assisted code generation. All
+generated content was reviewed, tested, and refined by human contributors. See
+the LICENSE file for additional information regarding AI-generated content.
+
 ## Quick start
 
 ```bash
@@ -40,8 +46,8 @@ Then run it either way. Both serve on **port 8080**, so run one at a time.
 ```
 
 No JDK setup required: Gradle downloads the Java 25 Microsoft Build of OpenJDK
-toolchain on first build. DevTools is active, so edits to `src/main` restart
-the app automatically. Activates the `local` profile.
+toolchain on first build. DevTools is active, so edits to `src/main` restart the
+app automatically. Activates the `local` profile.
 
 ### Option 2 — Docker
 
@@ -295,9 +301,10 @@ property instead.
 5. Delete the `HelloWorld*` classes and their tests
 6. Once your dependencies settle, regenerate the lock files with
    `./gradlew :app:dependencies --write-locks` and commit them
-7. For CI, provide the two secrets `.github/workflows/build-verify.yml` expects —
-   a `read:packages` PAT and a SonarCloud token — and point `distribution:` in
-   its setup-java step at whatever toolchain vendor you pinned
+7. For CI, provide the two secrets `.github/workflows/build-verify.yml`
+   expects — a `read:packages` PAT and a SonarCloud token — and point
+   `distribution:` in its setup-java step at whatever toolchain vendor you
+   pinned
 
 Everything else — toolchain, formatting, coverage gate, publishing, release
 flow — carries over unchanged.
@@ -306,7 +313,8 @@ flow — carries over unchanged.
 
 The laboratory half of this project. Nothing here is committed to a date:
 
-- [x] CI verification (GitHub Actions: compile, test, check, sonar on push to `main`)
+- [x] CI verification (GitHub Actions: compile, test, check, sonar on push to
+  `main`)
 - [ ] CD workflows — publish, release, and deploy from CI
 - [x] Containerisation — multi-stage `Dockerfile` + `docker-compose.yml`
 - [ ] Cloud deployment targets
@@ -317,11 +325,18 @@ The laboratory half of this project. Nothing here is committed to a date:
 
 ## Documentation
 
-| Document             | Contents                                                        |
-|----------------------|-----------------------------------------------------------------|
-| [BUILD.md](BUILD.md) | Every Gradle task, when it runs, how to run it, troubleshooting |
-| [llms.txt](llms.txt) | Machine-readable index for AI coding assistants                 |
+| Document                       | Contents                                                        |
+|--------------------------------|-----------------------------------------------------------------|
+| [BUILD.md](BUILD.md)           | Every Gradle task, when it runs, how to run it, troubleshooting |
+| [llms.txt](llms.txt)           | Machine-readable index for AI coding assistants                 |
+| [LICENSE](LICENSE)             | MIT terms, plus AI-content and copyright-status notices         |
+| [DISCLAIMER.md](DISCLAIMER.md) | General AI-generated content disclaimer                         |
 
 ## License
 
-Apache License 2.0. Author: [Rubens Gomes](https://rubensgomes.com).
+[MIT License](LICENSE). Author: [Rubens Gomes](https://rubensgomes.com).
+
+Source files carry an `SPDX-License-Identifier: MIT` header, injected and
+verified by Spotless. The [LICENSE](LICENSE) file also carries the project's
+AI-generated content, third-party content, and copyright-status notices — read
+it rather than the SPDX tag alone.

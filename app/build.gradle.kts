@@ -1,4 +1,14 @@
 /*
+ * SPDX-License-Identifier: MIT
+ *
+ * Copyright (c) 2026 Rubens Gomes
+ *
+ * This file may contain content generated or assisted by Artificial Intelligence
+ * tools and subsequently reviewed and modified by human contributors.
+ * See the LICENSE file for licensing terms and additional AI disclosures.
+ *
+ * ---------------------------------------------------------------------
+ *
  * Blueprint Gradle build script (Kotlin DSL) used by Rubens Gomes
  * in Gradle + Spring Boot Java projects.
  *
@@ -566,25 +576,25 @@ publishing {
 // ---------------------------------------------------------------------
 // https://github.com/diffplug/spotless
 
-// Apache 2.0 header injected by spotless into every Java and Kotlin source
-// file. Files missing the header get it prepended; an existing header is
-// replaced. Keep the year in sync with the license year used elsewhere.
+// SPDX MIT header injected by spotless into every Java and Kotlin source
+// file under "src/**". Files missing the header get it prepended; an existing
+// header is replaced. Keep the year in sync with the license year used
+// elsewhere, and keep the licence itself in sync with the root LICENSE file,
+// the "license"/"licenseUrl" properties in the root "gradle.properties" (they
+// feed the published POM), and the OCI label in the Dockerfile.
+//
+// NOTE: this reaches "src/**" only. The headers on "settings.gradle.kts" and
+// on this file are not managed by spotless.
 val licenseHeaderText =
     """
     /*
-     * Copyright 2026 Rubens Gomes
+     * SPDX-License-Identifier: MIT
      *
-     * Licensed under the Apache License, Version 2.0 (the "License");
-     * You may not use this file except in compliance with the License.
-     * You may obtain a copy of the License at
+     * Copyright (c) 2026 Rubens Gomes
      *
-     *     http://www.apache.org/licenses/LICENSE-2.0
-     *
-     * Unless required by applicable law or agreed to in writing, software
-     * distributed under the License is distributed on an "AS IS" BASIS,
-     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     * See the License for the specific language governing permissions and
-     * limitations under the License.
+     * This file may contain content generated or assisted by Artificial Intelligence
+     * tools and subsequently reviewed and modified by human contributors.
+     * See the LICENSE file for licensing terms and additional AI disclosures.
      */
     """.trimIndent()
 

@@ -116,7 +116,7 @@ three sources.
 | Property | Drives |
 |---|---|
 | `developerId`, `developerName`, `developerEmail` | Jar manifest, POM `<developers>` |
-| `license`, `licenseUrl` | POM `<licenses>` |
+| `license`, `licenseUrl` | POM `<licenses>` — currently `MIT License`; must match the root `LICENSE` file |
 | `mavenRepoPackages` | GitHub Packages URL, for both resolving and publishing |
 | `scmConnection`, `scmUrl` | POM `<scm>`, and the published POM `<url>` |
 | `sonar.*` | SonarCloud coordinates and quality-gate behaviour |
@@ -428,7 +428,29 @@ gate decorative.
 | `src/**/*.yaml`, `*.yml` | whitespace only | Jackson would delete every comment |
 | `*.gradle.kts` | ktlint | driven by the root `.editorconfig` |
 
-Java and Kotlin sources also get an Apache 2.0 licence header injected.
+Java and Kotlin sources also get a licence header injected — an
+`SPDX-License-Identifier: MIT` tag, the copyright line, and a pointer to
+`LICENSE` for the project's AI-content disclosures. The text is the
+`licenseHeaderText` constant in `app/build.gradle.kts`; edit it there, then run
+`./gradlew spotlessApply` to restamp every file.
+
+> **Note** — `licenseHeader` is configured on the `java` and `kotlin` formats
+> only, which target `src/**`. The headers on `settings.gradle.kts` and
+> `app/build.gradle.kts` carry the same licence text but are **not** managed by
+> Spotless and will not be restamped; they have to be edited by hand.
+
+Two ktlint constraints apply to the header on `app/build.gradle.kts`, and both
+fail `spotlessKotlinGradleCheck` rather than being auto-fixed:
+
+- It must be **one** block comment. The licence text is merged into the same
+  comment as the script documentation, separated by a dashed rule, because
+  `standard:no-consecutive-comments` rejects "a block comment ... preceded by a
+  block comment".
+- It must be a plain block comment, never KDoc — see the note below.
+
+`settings.gradle.kts` escapes both, but only by accident: the `kotlinGradle`
+target is `target("*.gradle.kts")`, which resolves **relative to the `app`
+project**, so the root settings script is not linted by any Spotless step.
 
 To have formatting verified before every push:
 

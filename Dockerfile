@@ -147,7 +147,7 @@ LABEL org.opencontainers.image.title="spring-blueprint" \
       org.opencontainers.image.description="Blueprint Spring Boot Java project" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.source="https://github.com/rubensgomes-org/spring-blueprint" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="Rubens Gomes"
 
 # A real account rather than a bare numeric USER, so getpwuid() lookups
