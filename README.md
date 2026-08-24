@@ -144,13 +144,13 @@ Credentials are only ever needed at **build** time; see
 | Release    | `net.researchgate.release`                        |
 | Publishing | GitHub Packages                                   |
 | Container  | Multi-stage Docker build on eclipse-temurin JRE   |
-| CI         | GitHub Actions — compile, test, check, sonar      |
+| CI         | GitHub Actions — verify on push, manual release   |
 
 Versions are never hard-coded in the build script. Every plugin and library
 resolves through the shared version catalog, and library versions come from the
 Spring Boot BOM.
 
-That pins the *declared* versions; three lock files pin the *transitive* graph
+That pins the *declared* versions; four lock files pin the *transitive* graph
 on top of it, so the same source tree resolves identically on any machine and on
 any day.
 
@@ -186,7 +186,7 @@ fell through to it and 404'd.
 
 Bumping the catalog does not necessarily change anything downstream. If the
 catalog declares the same versions this project already uses, only
-`settings-gradle.lockfile` changes and the other two come back byte-identical.
+`settings-gradle.lockfile` changes and the others come back byte-identical.
 
 Locking runs in strict mode — a missing lock file fails the build rather than
 quietly resolving whatever is newest. Details in
@@ -244,8 +244,9 @@ side:
 | `./gradlew build`                           | Format check + tests + coverage gate + all artifacts |
 | `./gradlew spotlessApply`                   | Reformat sources                                     |
 | `./gradlew publishToMavenLocal`             | Install to `~/.m2`                                   |
-| `./gradlew release`                         | Tag, merge to `release`, bump to next snapshot       |
-| `./gradlew :app:dependencies --write-locks` | Regenerate the three dependency lock files           |
+| `./gradlew release`                         | Tag, merge to `release`, bump (prefer the workflow)  |
+| `./gradlew :app:dependencies --write-locks` | Regenerate the `:app` dependency lock files          |
+| `gh workflow run release.yml`               | Cut a release from CI (manual trigger)               |
 | `./gradlew dockerBuild`                     | Build the image (tags version + `local`)             |
 | `docker compose up --build -d`              | Build and run the container image                    |
 | `docker compose down`                       | Stop and remove the container                        |
@@ -268,7 +269,8 @@ spring-blueprint/
 ├── BUILD.md                   # build documentation
 ├── llms.txt                   # machine-readable project index
 ├── .github/workflows/
-│   └── build-verify.yml       # CI: compile, test, check, sonar on push to main
+│   ├── build-verify.yml       # CI: compile, test, check, sonar on push to main
+│   └── release.yml            # manual: ./gradlew release
 └── app/
     ├── build.gradle.kts       # the entire build
     ├── gradle.lockfile        # lock state: application dependencies
@@ -303,10 +305,10 @@ property instead.
 5. Delete the `HelloWorld*` classes and their tests
 6. Once your dependencies settle, regenerate the lock files with
    `./gradlew :app:dependencies --write-locks` and commit them
-7. For CI, provide the two secrets `.github/workflows/build-verify.yml`
-   expects — a `read:packages` PAT and a SonarCloud token — and point
-   `distribution:` in its setup-java step at whatever toolchain vendor you
-   pinned
+7. For CI, provide the two secrets the workflows expect — a `read:packages`
+   PAT and a SonarCloud token — and point `distribution:` in each setup-java
+   step at whatever toolchain vendor you pinned. `release.yml` additionally
+   needs that PAT to have **write** access, since it pushes commits and tags
 
 Everything else — toolchain, formatting, coverage gate, publishing, release
 flow — carries over unchanged.
@@ -317,7 +319,8 @@ The laboratory half of this project. Nothing here is committed to a date:
 
 - [x] CI verification (GitHub Actions: compile, test, check, sonar on push to
   `main`)
-- [ ] CD workflows — publish, release, and deploy from CI
+- [x] Release from CI (GitHub Actions: manual `release.yml`)
+- [ ] CD workflows — publish and deploy from CI
 - [x] Containerisation — multi-stage `Dockerfile` + `docker-compose.yml`
 - [ ] Cloud deployment targets
 - [ ] Persistence layer with a real domain model

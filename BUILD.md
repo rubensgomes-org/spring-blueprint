@@ -16,6 +16,7 @@ and when it runs.
 - [Publishing](#publishing)
 - [Releasing](#releasing)
 - [Static analysis](#static-analysis)
+- [Continuous integration](#continuous-integration)
 - [Diagnostics](#diagnostics)
 - [Troubleshooting](#troubleshooting)
 
@@ -35,6 +36,7 @@ and when it runs.
 | `./gradlew dockerBuild` | Build the Docker image (requires a running daemon) |
 | `docker compose up --build -d` | Build and run the container |
 | `docker compose down` | Stop and remove the container |
+| `./gradlew release` | Cut a release (prefer `gh workflow run release.yml`) |
 
 Always use the wrapper (`./gradlew`), never a locally installed `gradle`. The
 wrapper pins **Gradle 9.7.1**.
@@ -94,7 +96,8 @@ spring-blueprint/
 ├── BUILD.md                   # this file
 ├── .editorconfig              # ktlint rules for *.gradle.kts
 ├── .github/workflows/
-│   └── build-verify.yml       # CI: compile, test, check, sonar on push to main
+│   ├── build-verify.yml       # CI: compile, test, check, sonar on push to main
+│   └── release.yml            # manual: ./gradlew release
 └── app/
     ├── build.gradle.kts       # the entire build
     ├── gradle.lockfile        # lock state: application dependencies
@@ -739,6 +742,48 @@ coverage gate.
 > which is why `org.gradle.configuration-cache=false` is set in the root
 > `gradle.properties`.
 
+### Releasing from CI
+
+`.github/workflows/release.yml` runs exactly that command on a runner. It is the
+preferred way to cut a release: the runner always starts from a clean checkout of
+`main`, which is the state the plugin's preconditions assume.
+
+```bash
+gh workflow run release.yml
+```
+
+or the **Run workflow** button on the Actions tab.
+
+**`workflow_dispatch` only — there is no push or schedule trigger.** A release is
+a deliberate act, and unlike `build-verify.yml` this workflow *writes* to the
+repository. That difference drives everything else about it:
+
+| Setting | Why |
+|---|---|
+| `permissions: contents: write` | It pushes two commits, a tag, and the `release` branch |
+| `ref: main`, `fetch-depth: 0` on checkout | `requireBranch` is `main`, and the plugin diffs local against remote — a shallow or detached checkout breaks the branch check and tag creation |
+| `token: ${{ secrets.RUBENS_PAT_TOKEN }}` on checkout | The token checkout persists is what the plugin's own `git push` uses. It must be a PAT — see below |
+| `concurrency`, `cancel-in-progress: false` | Two releases would race to tag from the same starting point, and interrupting a half-finished release leaves tags and commits inconsistent |
+
+**It configures a git identity before releasing.** The plugin makes two commits,
+and a runner has no `user.name` or `user.email`, so a release would otherwise
+fail at `preTagCommit`. The values are read out of `gradle.properties`
+(`developerName`, `developerEmail`) rather than hardcoded, so the maintainer
+identity is not written down in a second place.
+
+**Why a PAT rather than the automatic token.** A push made with the per-run
+`GITHUB_TOKEN` does not trigger other workflows — GitHub suppresses that to
+prevent recursion. Using it here would mean the released commit is never
+verified by `build-verify.yml`. The PAT restores that, at the cost of each
+release triggering roughly two extra `build-verify` runs, one per pushed commit.
+
+**Two things that will stop the first run:**
+
+- The workflow must exist on the **default branch** before `workflow_dispatch`
+  offers it at all.
+- **Branch protection on `main` will reject the push.** The PAT needs write
+  access and, where protection is enabled, an exemption.
+
 ## Static analysis
 
 ```bash
@@ -772,8 +817,26 @@ Cloning this project as a template means replacing `sonar.organization`,
 
 ## Continuous integration
 
-`.github/workflows/build-verify.yml` runs the same gate on every push to `main`,
-through the committed wrapper, so CI and a workstation execute identical Gradle.
+Two workflows, with opposite postures:
+
+| Workflow | Trigger | Writes to the repo? |
+|---|---|---|
+| `build-verify.yml` | every push to `main` | No — `permissions: contents: read` |
+| `release.yml` | manual (`workflow_dispatch`) | **Yes** — commits, a tag, the `release` branch |
+
+`release.yml` is covered under [Releasing from CI](#releasing-from-ci). The rest
+of this section is about `build-verify.yml`.
+
+Both share the same three setup steps — checkout, `setup-java` with
+`distribution: microsoft`, `setup-gradle` — and the same `GRADLE_ARGS`, and both
+carry GitHub Packages credentials in `PACKAGES_USER` / `PACKAGES_TOKEN` because
+the `GITHUB_` prefix is reserved. Change one and consider whether the other needs
+the same change.
+
+### `build-verify.yml`
+
+It runs the same gate on every push to `main`, through the committed wrapper, so
+CI and a workstation execute identical Gradle.
 
 One job, `build-verify`, on `ubuntu-latest`. Three setup steps, then the four
 verification phases:
