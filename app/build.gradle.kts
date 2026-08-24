@@ -462,8 +462,15 @@ tasks.jacocoTestCoverageVerification {
 
 // "check" is what CI and the "bootJar" task run, so wiring the verification
 // in here is what makes the threshold binding.
+//
+// The root project's spotlessCheck is wired in for the same reason. It lints
+// the root Gradle scripts, which this project's own spotless block cannot
+// reach, and CI invokes ":app:check" rather than the unqualified "check" --
+// so without this dependency the root scripts would be format-checked by
+// nothing. Hanging it here means bootJar, build and release inherit it too.
 tasks.check {
     dependsOn(tasks.jacocoTestCoverageVerification)
+    dependsOn(rootProject.tasks.named("spotlessCheck"))
 }
 
 // ---------------------------------------------------------------------
@@ -649,9 +656,11 @@ spotless {
     }
 
     // Kotlin Gradle DSL formatting.
-    // NOTE: the target is resolved relative to THIS project directory, so it
-    // matches only "app/build.gradle.kts". The root "settings.gradle.kts" is
-    // not covered by this configuration.
+    // NOTE: this target is resolved relative to THIS project directory, so it
+    // covers "app/build.gradle.kts" only. Spotless refuses targets outside the
+    // project dir ("All target files must be within the project dir"), so the
+    // root scripts cannot be reached from here -- the root build script owns
+    // them instead. See the spotless block in "build.gradle.kts".
     kotlinGradle {
         target("*.gradle.kts")
         // ktlint, driven by the root .editorconfig for fine-grained control

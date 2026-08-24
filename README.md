@@ -262,6 +262,8 @@ spring-blueprint/
 ├── .dockerignore              # build-context exclusions
 ├── settings.gradle.kts        # inclusion, repositories, version catalog
 ├── settings-gradle.lockfile   # lock state: version catalog resolution
+├── build.gradle.kts           # root script: spotless for the root scripts ONLY
+├── buildscript-gradle.lockfile     # lock state: root plugin classpath
 ├── gradle.properties          # developer identity, license, SCM, Sonar, daemon
 ├── BUILD.md                   # build documentation
 ├── llms.txt                   # machine-readable project index

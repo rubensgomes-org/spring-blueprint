@@ -30,7 +30,8 @@ and when it runs.
 | `./gradlew spotlessApply` | Reformat sources in place |
 | `./gradlew publishToMavenLocal` | Install into `~/.m2/repository` |
 | `./gradlew clean` | Delete `app/build/` |
-| `./gradlew :app:dependencies --write-locks` | Regenerate the dependency lock files |
+| `./gradlew :app:dependencies --write-locks` | Regenerate the `:app` dependency lock files |
+| `./gradlew :dependencies --write-locks` | Regenerate the root buildscript lock file |
 | `./gradlew dockerBuild` | Build the Docker image (requires a running daemon) |
 | `docker compose up --build -d` | Build and run the container |
 | `docker compose down` | Stop and remove the container |
@@ -38,9 +39,14 @@ and when it runs.
 Always use the wrapper (`./gradlew`), never a locally installed `gradle`. The
 wrapper pins **Gradle 9.7.1**.
 
-There is one subproject, `app`, and the root project has no build script, so
+There is one subproject, `app`, which holds the entire application build, so
 `./gradlew build` and `./gradlew :app:build` are equivalent. The examples below
 use the short form.
+
+The root `build.gradle.kts` is a deliberate exception and stays minimal: it
+applies Spotless to the root Gradle scripts and nothing else, because Spotless
+cannot lint files outside its own project directory. See
+[Code formatting](#code-formatting).
 
 ## Prerequisites
 
@@ -82,6 +88,8 @@ with an unexplained HTTP 401.
 spring-blueprint/
 ├── settings.gradle.kts        # project inclusion, repositories, version catalog
 ├── settings-gradle.lockfile   # lock state: version catalog resolution
+├── build.gradle.kts           # root script: spotless for the root scripts ONLY
+├── buildscript-gradle.lockfile     # lock state: root plugin classpath
 ├── gradle.properties          # developer identity, license, SCM, Sonar, Gradle daemon
 ├── BUILD.md                   # this file
 ├── .editorconfig              # ktlint rules for *.gradle.kts
@@ -154,13 +162,14 @@ make the *transitive* graph a moving target: the same source tree can resolve
 different transitive versions on different days. Dependency locking pins the
 fully resolved graph.
 
-Three lock files, with different scopes:
+Four lock files, with different scopes:
 
 | File | Locks | Configured in |
 |---|---|---|
 | `settings-gradle.lockfile` | the `libs` catalog resolution (`incomingCatalogForLibs0`) | nothing — Gradle locks version-catalog configurations automatically |
+| `buildscript-gradle.lockfile` (root) | the root script's plugin `classpath` — Spotless only | the "Buildscript Classpath Locking" section of the root `build.gradle.kts` |
 | `app/gradle.lockfile` | `annotationProcessor`, `compileClasspath`, `developmentOnly`, `runtimeClasspath`, `testAnnotationProcessor`, `testCompileClasspath`, `testRuntimeClasspath` | the "Dependency Locking" section of `app/build.gradle.kts` |
-| `app/buildscript-gradle.lockfile` | the plugin `classpath` — the libraries the Gradle plugins themselves pull in and run inside the build | the "Buildscript Classpath Locking" section of `app/build.gradle.kts` |
+| `app/buildscript-gradle.lockfile` | the `:app` plugin `classpath` — the libraries the Gradle plugins themselves pull in and run inside the build | the "Buildscript Classpath Locking" section of `app/build.gradle.kts` |
 
 The tooling's own *resolvable configurations* — `jacocoAgent`, `jacocoAnt` and
 friends — are deliberately left out of `app/gradle.lockfile`. None reaches the
@@ -180,6 +189,13 @@ pinning even though the coverage tooling's runtime graph is not.
 The plugin *versions* are already pinned by the catalog, so
 `app/buildscript-gradle.lockfile` adds the plugins' own transitive closure —
 code that runs inside the build but was previously unpinned.
+
+> **Note** — Spotless appears in the **root** `buildscript-gradle.lockfile`, not
+> in `app/buildscript-gradle.lockfile`, even though `app` uses it heavily. A
+> subproject inherits the root project's buildscript classpath, so once the root
+> script applies Spotless, `:app` stops resolving it independently and its lock
+> file legitimately no longer lists it. A Spotless version bump therefore means
+> regenerating the **root** lock file.
 
 > **Note** — `LockMode.STRICT` is set **twice** in `app/build.gradle.kts`, once
 > inside `buildscript { }` and once on the project. The two are independent: the
@@ -220,7 +236,15 @@ Regenerate whenever any of these change:
   touched
 - a locked configuration is added to or removed from `lockedConfigurations`
 
-All three lock files are committed to source control. Never pass `--write-locks` in
+The root `buildscript-gradle.lockfile` is **not** covered by that command, which
+is scoped to `:app`. It pins the root script's only plugin, Spotless, so it needs
+regenerating when the catalog moves the Spotless version:
+
+```bash
+./gradlew :dependencies --write-locks
+```
+
+All four lock files are committed to source control. Never pass `--write-locks` in
 an automated build: it would rewrite the lock state to match whatever resolved
 at that moment, which is precisely the unpredictability locking exists to
 prevent.
@@ -448,9 +472,28 @@ fail `spotlessKotlinGradleCheck` rather than being auto-fixed:
   block comment".
 - It must be a plain block comment, never KDoc — see the note below.
 
-`settings.gradle.kts` escapes both, but only by accident: the `kotlinGradle`
-target is `target("*.gradle.kts")`, which resolves **relative to the `app`
-project**, so the root settings script is not linted by any Spotless step.
+The same two constraints apply to `settings.gradle.kts`, for the same reason.
+
+### Why there are two Spotless configurations
+
+A Spotless target is always resolved relative to the project that declares it,
+and Spotless rejects anything outside that directory outright:
+
+```
+Spotless error! All target files must be within the project dir.
+```
+
+So `app`'s Spotless block can never reach the root scripts, however its target
+is written. The root scripts are covered by a **second, minimal
+`spotless` block in the root `build.gradle.kts`**, whose only job is linting
+`settings.gradle.kts` and the root script itself. Application configuration
+still lives entirely in `app/build.gradle.kts`.
+
+`:app:check` depends on the root `spotlessCheck`, so `bootJar`, `build`,
+`release`, and CI — which invokes `:app:check`, not the unqualified `check` —
+all inherit it. Before that wiring existed the root scripts were linted by
+nothing, which is how a stale Apache-2.0 licence header and a trailing-
+whitespace violation both survived there unnoticed.
 
 To have formatting verified before every push:
 
