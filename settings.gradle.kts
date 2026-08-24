@@ -1,22 +1,24 @@
 /*
- * Copyright 2025 Rubens Gomes
+ * SPDX-License-Identifier: MIT
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Copyright (c) 2026 Rubens Gomes
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * This file may contain content generated or assisted by Artificial Intelligence
+ * tools and subsequently reviewed and modified by human contributors.
+ * See the LICENSE file for licensing terms and additional AI disclosures.
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the__LICENSE] [1].
- */
-
-/**
+ * ---------------------------------------------------------------------
+ *
  * This is a blueprint Gradle settings.gradle.kts file used by Rubens Gomes
- * during the creation of a new Gradle Java developement project.
+ * during the creation of a new Gradle Java development project.
+ *
+ * Formatting note: this header is a plain block comment, NOT a KDoc comment,
+ * and the licence text is merged into it rather than sitting in a comment of
+ * its own. Both are load-bearing. ktlint's "standard:kdoc" rule rejects KDoc
+ * at the top level of a Gradle script ("A KDoc is not allowed inside
+ * 'block'"), and "standard:no-consecutive-comments" rejects a block comment
+ * preceded by another block comment. Either one fails
+ * ":spotlessKotlinGradleApply".
  *
  * @author [Rubens Gomes](https://rubensgomes.com)
  */
@@ -80,7 +82,7 @@ dependencyResolutionManagement {
     }
 
     // Fetch GitHub repo URLs directly from gradle.properties
-    val mavenRepoPackages = 
+    val mavenRepoPackages =
         settings.extra.properties["mavenRepoPackages"] as? String
     repositories {
         mavenCentral()

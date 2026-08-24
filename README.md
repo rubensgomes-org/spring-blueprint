@@ -16,6 +16,12 @@ It exists for three reasons:
 
 ---
 
+## AI-Assisted Development
+
+This project was developed primarily using AI-assisted code generation. All
+generated content was reviewed, tested, and refined by human contributors. See
+the LICENSE file for additional information regarding AI-generated content.
+
 ## Quick start
 
 ```bash
@@ -39,9 +45,9 @@ Then run it either way. Both serve on **port 8080**, so run one at a time.
 ./gradlew bootRun
 ```
 
-No JDK setup required: Gradle downloads the Java 25 Amazon Corretto toolchain on
-first build. DevTools is active, so edits to `src/main` restart the app
-automatically. Activates the `local` profile.
+No JDK setup required: Gradle downloads the Java 25 Microsoft Build of OpenJDK
+toolchain on first build. DevTools is active, so edits to `src/main` restart the
+app automatically. Activates the `local` profile.
 
 ### Option 2 — Docker
 
@@ -127,9 +133,9 @@ Credentials are only ever needed at **build** time; see
 
 | Layer      | Choice                                            |
 |------------|---------------------------------------------------|
-| Language   | Java 25 (Amazon Corretto toolchain)               |
+| Language   | Java 25 (Microsoft Build of OpenJDK toolchain)    |
 | Framework  | Spring Boot 4.1.1 — Web MVC, Actuator, Validation |
-| Build      | Gradle 9.7.0, Kotlin DSL                          |
+| Build      | Gradle 9.7.1, Kotlin DSL                          |
 | Versions   | Shared catalog `com.rubensgomes:gradle-catalog`   |
 | Testing    | JUnit 5, Mockito, AssertJ, Spring Test            |
 | Coverage   | JaCoCo, enforced at 90% line and branch           |
@@ -138,12 +144,13 @@ Credentials are only ever needed at **build** time; see
 | Release    | `net.researchgate.release`                        |
 | Publishing | GitHub Packages                                   |
 | Container  | Multi-stage Docker build on eclipse-temurin JRE   |
+| CI         | GitHub Actions — verify on push, manual release   |
 
 Versions are never hard-coded in the build script. Every plugin and library
 resolves through the shared version catalog, and library versions come from the
 Spring Boot BOM.
 
-That pins the *declared* versions; three lock files pin the *transitive* graph
+That pins the *declared* versions; four lock files pin the *transitive* graph
 on top of it, so the same source tree resolves identically on any machine and on
 any day.
 
@@ -179,7 +186,7 @@ fell through to it and 404'd.
 
 Bumping the catalog does not necessarily change anything downstream. If the
 catalog declares the same versions this project already uses, only
-`settings-gradle.lockfile` changes and the other two come back byte-identical.
+`settings-gradle.lockfile` changes and the others come back byte-identical.
 
 Locking runs in strict mode — a missing lock file fails the build rather than
 quietly resolving whatever is newest. Details in
@@ -237,8 +244,9 @@ side:
 | `./gradlew build`                           | Format check + tests + coverage gate + all artifacts |
 | `./gradlew spotlessApply`                   | Reformat sources                                     |
 | `./gradlew publishToMavenLocal`             | Install to `~/.m2`                                   |
-| `./gradlew release`                         | Tag, merge to `release`, bump to next snapshot       |
-| `./gradlew :app:dependencies --write-locks` | Regenerate the three dependency lock files           |
+| `./gradlew release`                         | Tag, merge to `release`, bump (prefer the workflow)  |
+| `./gradlew :app:dependencies --write-locks` | Regenerate the `:app` dependency lock files          |
+| `gh workflow run release.yml`               | Cut a release from CI (manual trigger)               |
 | `./gradlew dockerBuild`                     | Build the image (tags version + `local`)             |
 | `docker compose up --build -d`              | Build and run the container image                    |
 | `docker compose down`                       | Stop and remove the container                        |
@@ -255,14 +263,19 @@ spring-blueprint/
 ├── .dockerignore              # build-context exclusions
 ├── settings.gradle.kts        # inclusion, repositories, version catalog
 ├── settings-gradle.lockfile   # lock state: version catalog resolution
-├── gradle.properties          # developer identity, license, Sonar, daemon
+├── build.gradle.kts           # root script: spotless for the root scripts ONLY
+├── buildscript-gradle.lockfile     # lock state: root plugin classpath
+├── gradle.properties          # developer identity, license, SCM, Sonar, daemon
 ├── BUILD.md                   # build documentation
 ├── llms.txt                   # machine-readable project index
+├── .github/workflows/
+│   ├── build-verify.yml       # CI: compile, test, check, sonar on push to main
+│   └── release.yml            # manual: ./gradlew release
 └── app/
     ├── build.gradle.kts       # the entire build
     ├── gradle.lockfile        # lock state: application dependencies
     ├── buildscript-gradle.lockfile  # lock state: plugin classpath
-    ├── gradle.properties      # coordinates, version, SCM
+    ├── gradle.properties      # coordinates, version
     └── src/
         ├── main/resources/
         │   ├── application.yml             # defaults (quiet: root=error)
@@ -284,13 +297,18 @@ property instead.
 ## Using this as a template
 
 1. Clone, then update `app/gradle.properties` — `artifactId`, `group`,
-   `description`, `title`, `mainClass`, `scmConnection`, `scmUrl`
+   `description`, `title`, `mainClass`
 2. Update `rootProject.name` in `settings.gradle.kts` to match the directory
-3. Replace the SonarCloud placeholders in `gradle.properties`
+3. Update `gradle.properties` — `scmConnection`, `scmUrl`, and the SonarCloud
+   coordinates `sonar.organization`, `sonar.projectKey`, `sonar.projectName`
 4. Rename the `com.rubensgomes.blueprint` package
 5. Delete the `HelloWorld*` classes and their tests
 6. Once your dependencies settle, regenerate the lock files with
    `./gradlew :app:dependencies --write-locks` and commit them
+7. For CI, provide the two secrets the workflows expect — a `read:packages`
+   PAT and a SonarCloud token — and point `distribution:` in each setup-java
+   step at whatever toolchain vendor you pinned. `release.yml` additionally
+   needs that PAT to have **write** access, since it pushes commits and tags
 
 Everything else — toolchain, formatting, coverage gate, publishing, release
 flow — carries over unchanged.
@@ -299,7 +317,10 @@ flow — carries over unchanged.
 
 The laboratory half of this project. Nothing here is committed to a date:
 
-- [ ] CI/CD workflows (GitHub Actions: build, test, publish, release)
+- [x] CI verification (GitHub Actions: compile, test, check, sonar on push to
+  `main`)
+- [x] Release from CI (GitHub Actions: manual `release.yml`)
+- [ ] CD workflows — publish and deploy from CI
 - [x] Containerisation — multi-stage `Dockerfile` + `docker-compose.yml`
 - [ ] Cloud deployment targets
 - [ ] Persistence layer with a real domain model
@@ -309,11 +330,18 @@ The laboratory half of this project. Nothing here is committed to a date:
 
 ## Documentation
 
-| Document             | Contents                                                        |
-|----------------------|-----------------------------------------------------------------|
-| [BUILD.md](BUILD.md) | Every Gradle task, when it runs, how to run it, troubleshooting |
-| [llms.txt](llms.txt) | Machine-readable index for AI coding assistants                 |
+| Document                       | Contents                                                        |
+|--------------------------------|-----------------------------------------------------------------|
+| [BUILD.md](BUILD.md)           | Every Gradle task, when it runs, how to run it, troubleshooting |
+| [llms.txt](llms.txt)           | Machine-readable index for AI coding assistants                 |
+| [LICENSE](LICENSE)             | MIT terms, plus AI-content and copyright-status notices         |
+| [DISCLAIMER.md](DISCLAIMER.md) | General AI-generated content disclaimer                         |
 
 ## License
 
-Apache License 2.0. Author: [Rubens Gomes](https://rubensgomes.com).
+[MIT License](LICENSE). Author: [Rubens Gomes](https://rubensgomes.com).
+
+Source files carry an `SPDX-License-Identifier: MIT` header, injected and
+verified by Spotless. The [LICENSE](LICENSE) file also carries the project's
+AI-generated content, third-party content, and copyright-status notices — read
+it rather than the SPDX tag alone.

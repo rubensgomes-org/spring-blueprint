@@ -1,4 +1,14 @@
 /*
+ * SPDX-License-Identifier: MIT
+ *
+ * Copyright (c) 2026 Rubens Gomes
+ *
+ * This file may contain content generated or assisted by Artificial Intelligence
+ * tools and subsequently reviewed and modified by human contributors.
+ * See the LICENSE file for licensing terms and additional AI disclosures.
+ *
+ * ---------------------------------------------------------------------
+ *
  * Blueprint Gradle build script (Kotlin DSL) used by Rubens Gomes
  * in Gradle + Spring Boot Java projects.
  *
@@ -276,12 +286,15 @@ java {
     // publish "-sources" and "-javadoc" jars alongside the main artifact
     withSourcesJar()
     withJavadocJar()
-    // Compile and test against a Java 25 Amazon Corretto toolchain,
-    // independent of the JDK running Gradle itself. The toolchain is
-    // auto-provisioned by the foojay resolver applied in settings.gradle.kts.
+    // Compile and test against a Java 25 Microsoft Build of OpenJDK
+    // toolchain, independent of the JDK running Gradle itself. The toolchain
+    // is auto-provisioned by the foojay resolver applied in
+    // settings.gradle.kts. NOTE: the Dockerfile builder stage is pinned to a
+    // Microsoft base image to match this vendor; changing the vendor here
+    // requires changing that base image too.
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(25))
-        vendor.set(JvmVendorSpec.AMAZON)
+        vendor.set(JvmVendorSpec.MICROSOFT)
     }
 }
 
@@ -449,8 +462,15 @@ tasks.jacocoTestCoverageVerification {
 
 // "check" is what CI and the "bootJar" task run, so wiring the verification
 // in here is what makes the threshold binding.
+//
+// The root project's spotlessCheck is wired in for the same reason. It lints
+// the root Gradle scripts, which this project's own spotless block cannot
+// reach, and CI invokes ":app:check" rather than the unqualified "check" --
+// so without this dependency the root scripts would be format-checked by
+// nothing. Hanging it here means bootJar, build and release inherit it too.
 tasks.check {
     dependsOn(tasks.jacocoTestCoverageVerification)
+    dependsOn(rootProject.tasks.named("spotlessCheck"))
 }
 
 // ---------------------------------------------------------------------
@@ -563,25 +583,25 @@ publishing {
 // ---------------------------------------------------------------------
 // https://github.com/diffplug/spotless
 
-// Apache 2.0 header injected by spotless into every Java and Kotlin source
-// file. Files missing the header get it prepended; an existing header is
-// replaced. Keep the year in sync with the license year used elsewhere.
+// SPDX MIT header injected by spotless into every Java and Kotlin source
+// file under "src/**". Files missing the header get it prepended; an existing
+// header is replaced. Keep the year in sync with the license year used
+// elsewhere, and keep the licence itself in sync with the root LICENSE file,
+// the "license"/"licenseUrl" properties in the root "gradle.properties" (they
+// feed the published POM), and the OCI label in the Dockerfile.
+//
+// NOTE: this reaches "src/**" only. The headers on "settings.gradle.kts" and
+// on this file are not managed by spotless.
 val licenseHeaderText =
     """
     /*
-     * Copyright 2026 Rubens Gomes
+     * SPDX-License-Identifier: MIT
      *
-     * Licensed under the Apache License, Version 2.0 (the "License");
-     * You may not use this file except in compliance with the License.
-     * You may obtain a copy of the License at
+     * Copyright (c) 2026 Rubens Gomes
      *
-     *     http://www.apache.org/licenses/LICENSE-2.0
-     *
-     * Unless required by applicable law or agreed to in writing, software
-     * distributed under the License is distributed on an "AS IS" BASIS,
-     * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     * See the License for the specific language governing permissions and
-     * limitations under the License.
+     * This file may contain content generated or assisted by Artificial Intelligence
+     * tools and subsequently reviewed and modified by human contributors.
+     * See the LICENSE file for licensing terms and additional AI disclosures.
      */
     """.trimIndent()
 
@@ -636,9 +656,11 @@ spotless {
     }
 
     // Kotlin Gradle DSL formatting.
-    // NOTE: the target is resolved relative to THIS project directory, so it
-    // matches only "app/build.gradle.kts". The root "settings.gradle.kts" is
-    // not covered by this configuration.
+    // NOTE: this target is resolved relative to THIS project directory, so it
+    // covers "app/build.gradle.kts" only. Spotless refuses targets outside the
+    // project dir ("All target files must be within the project dir"), so the
+    // root scripts cannot be reached from here -- the root build script owns
+    // them instead. See the spotless block in "build.gradle.kts".
     kotlinGradle {
         target("*.gradle.kts")
         // ktlint, driven by the root .editorconfig for fine-grained control

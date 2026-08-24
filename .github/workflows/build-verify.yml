@@ -1,0 +1,277 @@
+# SPDX-License-Identifier: MIT
+#
+# Copyright (c) 2026 Rubens Gomes
+#
+# This file may contain content generated or assisted by Artificial Intelligence
+# tools and subsequently reviewed and modified by human contributors.
+# See the LICENSE file for licensing terms and additional AI disclosures.
+
+# ---------------------------------------------------------------------------
+# Continuous verification for the spring-blueprint project.
+#
+# Runs the same gate a developer runs locally -- compile, test, check, sonar --
+# on every push to "main", driven through the committed Gradle wrapper so that
+# CI and a workstation execute byte-identical Gradle.
+#
+# WHY FOUR SEPARATE ./gradlew INVOCATIONS
+#   The task graph already chains these: "sonar" dependsOn "check", "check"
+#   dependsOn jacocoTestCoverageVerification -> jacocoTestReport -> "test". So
+#   "./gradlew :app:sonar" alone would run all of it in one shot.
+#
+#   Splitting it buys four independently red/green steps, so a failure points
+#   at a phase instead of at one 23-task wall of output. It is not wasteful:
+#   all four steps share one workspace and one Gradle daemon, and up-to-date
+#   state is persisted in "<project>/.gradle", not in daemon memory. Each step
+#   therefore finds the previous step's work UP-TO-DATE and adds only its own:
+#
+#     compile -> processResources, compileJava, compileTestJava
+#     test    -> test, jacocoTestReport (a finalizer of "test")
+#     check   -> spotless*Check, jacocoTestCoverageVerification
+#     sonar   -> sonarResolver, sonar
+#
+#   The real cost is configuration time x4, because the release plugin forces
+#   "org.gradle.configuration-cache=false". Budget a few seconds per step.
+#
+# @author Rubens Gomes
+# ---------------------------------------------------------------------------
+name: build-verify
+
+on:
+  # Requirement: trigger on a commit push, restricted to "main".
+  #
+  # A "branches:" filter matches only refs/heads/*, so the 0.0.x tags that the
+  # release plugin creates do NOT start a run. The two commits it pushes to
+  # main ("[Gradle Release Plugin] - pre tag commit" / "- new version commit")
+  # DO start runs; see the note at the bottom of this file.
+  push:
+    branches:
+      - main
+
+# Least privilege. The automatic per-run token is used by exactly one thing --
+# actions/checkout cloning this repository -- so "contents: read" is the whole
+# requirement.
+#
+# Deliberately NOT "packages: read": that would not help anyway. The artifacts
+# live in rubensgomes-org/mvn-pkgs, a DIFFERENT repository, and the per-run
+# token is scoped to this one. That cross-repository gap is exactly why a
+# personal access token is used instead (see PACKAGES_TOKEN below).
+permissions:
+  contents: read
+
+# Serialize runs on a given ref. Two concurrent runs would push two analyses
+# for the same SonarCloud project key, and the gate results could then land out
+# of order, making "which commit is green?" ambiguous.
+#
+# cancel-in-progress is false on purpose: main is the verification gate, so
+# every commit should get a verdict rather than only the newest one. Set it to
+# true to trade that for faster feedback on rapid pushes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-verify:
+    name: build-verify
+    runs-on: ubuntu-latest
+
+    # "sonar.qualitygate.wait=true" makes the last step BLOCK on SonarCloud's
+    # compute engine. If that queue backs up the step waits rather than fails,
+    # so an explicit ceiling keeps a stuck run from burning hours.
+    timeout-minutes: 30
+
+    env:
+      # ---------------------------------------------------------------------
+      # Credential carriers.
+      #
+      # settings.gradle.kts reads GITHUB_USER and GITHUB_TOKEN through
+      # System.getenv while EVALUATING SETTINGS -- that is, before any task
+      # runs -- because the shared version catalog
+      # "com.rubensgomes:gradle-catalog" resolves from GitHub Packages.
+      # EVERY ./gradlew invocation below therefore needs both, not just the
+      # publishing ones. Missing them yields a warning and then an
+      # unexplained HTTP 401.
+      #
+      # They cannot be declared here under their real names: GitHub Actions
+      # reserves the "GITHUB_" prefix and documents that custom variables
+      # "must not start with the GITHUB_ prefix". So the values ride in these
+      # safely-named carriers and each Gradle step exports the real names into
+      # its own shell. Exporting from a variable (rather than interpolating
+      # ${{ secrets.* }} straight into the shell) also keeps the token out of
+      # the command line.
+      #
+      # NOTE: the build reads GITHUB_USER, *not* the GITHUB_ACTOR that Actions
+      # provides for free. Do not rename it.
+      # ---------------------------------------------------------------------
+      PACKAGES_USER: ${{ github.actor }}
+      PACKAGES_TOKEN: ${{ secrets.RUBENS_PAT_TOKEN }}
+
+      # Read implicitly by the org.sonarqube plugin; no build script ever
+      # references it. Because gradle.properties sets sonar.qualitygate.wait,
+      # this token must be able to READ QUALITY GATE STATUS, not merely submit
+      # an analysis.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # Flags shared by all four invocations, declared once so they cannot
+      # drift apart.
+      #
+      # Each step expands this UNQUOTED -- "./gradlew $GRADLE_ARGS ..." -- and
+      # so depends on the shell splitting it into separate words. That is why
+      # every step below pins "shell: bash" explicitly: bash word-splits an
+      # unquoted expansion, but zsh does NOT, and under zsh the whole string
+      # would arrive as a single argument ("Argument value '...' given for
+      # --console option is invalid").
+      #
+      #   --console=plain
+      #       gradle.properties sets "org.gradle.console=verbose", which
+      #       renders poorly in the Actions log viewer.
+      #
+      #   -Dorg.gradle.logging.level=lifecycle
+      #       gradle.properties sets "org.gradle.logging.level=info", which is
+      #       overwhelming multiplied across four invocations. Gradle ranks
+      #       command-line sources above the project gradle.properties, so this
+      #       wins. If INFO output ever survives it, replace this with the
+      #       unambiguous CLI flag "-w" -- at the cost of also losing the
+      #       "> Task :app:..." lines and the SonarScanner summary.
+      #
+      #   -Porg.gradle.java.installations.auto-download=false
+      #       The build pins languageVersion 25 + vendor MICROSOFT, and
+      #       setup-java below installs exactly that. This flag removes the
+      #       foojay auto-provisioning fallback, so if the two ever drift apart
+      #       the build fails in seconds with "No matching toolchains" instead
+      #       of silently downloading a second ~200 MB JDK on every run. It
+      #       mirrors the Dockerfile builder stage for the same reason.
+      #       Expect ubuntu-latest's preinstalled Temurin JDKs to be listed as
+      #       detected-but-rejected in that error -- that is the vendor pin
+      #       working, not a bug.
+      GRADLE_ARGS: >-
+        --console=plain
+        -Dorg.gradle.logging.level=lifecycle
+        -Porg.gradle.java.installations.auto-download=false
+
+    steps:
+      # --- Setup: checkout, then the JDK, then Gradle. Order matters. -------
+
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          # SonarCloud derives New Code detection, per-line blame and issue
+          # backdating from git history. The default shallow clone makes the
+          # scanner log "Shallow clone detected" and silently degrade the
+          # analysis rather than fail.
+          fetch-depth: 0
+
+      # Must run BEFORE setup-gradle and before any ./gradlew call: it sets
+      # JAVA_HOME, which is both the JVM that runs the Gradle daemon and the
+      # installation Gradle discovers as a toolchain candidate.
+      - name: Set up Java 25 (Microsoft Build of OpenJDK)
+        uses: actions/setup-java@v5
+        with:
+          # MUST stay in sync with app/build.gradle.kts:
+          #   toolchain { languageVersion = 25; vendor = JvmVendorSpec.MICROSOFT }
+          # The runners' preinstalled Temurin does NOT satisfy that spec.
+          # Quoted so YAML cannot read a future "25.0" as a float.
+          distribution: microsoft
+          java-version: '25'
+          # Deliberately NO "cache: gradle" here -- setup-gradle below owns the
+          # Gradle User Home cache. Two actions saving the same ~/.gradle under
+          # different keys is the classic Gradle CI misconfiguration.
+
+      # Runs after checkout (it reads gradle/wrapper/gradle-wrapper.properties
+      # for its cache key) and after setup-java (so the daemon it manages sees
+      # the right JAVA_HOME). It also validates the checksum of the committed
+      # gradle-wrapper.jar by default, which makes a separate
+      # wrapper-validation action redundant.
+      #
+      # NOTE: never add --write-locks anywhere in this workflow. Dependency
+      # locking runs in LockMode.STRICT against three committed lock files;
+      # CI's job is to FAIL on lock drift, not to paper over it.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # --- The four required phases -----------------------------------------
+      # Every step echoes its own name and the exact command first, so the
+      # phase is identifiable from raw downloaded logs and from grep, not only
+      # from the collapsed step header in the web UI.
+      #
+      # No "--no-daemon": the daemon started by the compile step is reused by
+      # the other three. setup-gradle stops all daemons in its post-job step.
+
+      - name: compile
+        shell: bash
+        run: |
+          echo "=============================================================="
+          echo " STEP: compile"
+          echo " ./gradlew :app:classes :app:testClasses"
+          echo "=============================================================="
+          export GITHUB_USER="$PACKAGES_USER"
+          export GITHUB_TOKEN="$PACKAGES_TOKEN"
+          ./gradlew $GRADLE_ARGS :app:classes :app:testClasses
+          # "classes" rather than "compileJava" so processResources runs here
+          # too -- that is where the ReplaceTokens filter substitutes
+          # @artifactId@ into application.yml.
+          # "testClasses" is included on purpose: a syntax error in a test is a
+          # COMPILE failure and should be reported by this step, not surface
+          # later as a confusing failure of the test step.
+
+      - name: test
+        shell: bash
+        run: |
+          echo "=============================================================="
+          echo " STEP: test"
+          echo " ./gradlew :app:test"
+          echo "=============================================================="
+          export GITHUB_USER="$PACKAGES_USER"
+          export GITHUB_TOKEN="$PACKAGES_TOKEN"
+          ./gradlew $GRADLE_ARGS :app:test
+          # Compilation is UP-TO-DATE from the previous step. "test" is
+          # finalizedBy jacocoTestReport, so the XML coverage report that both
+          # the coverage gate and SonarCloud consume is produced here --
+          # including when tests fail.
+
+      - name: check
+        shell: bash
+        run: |
+          echo "=============================================================="
+          echo " STEP: check"
+          echo " ./gradlew :app:check"
+          echo "=============================================================="
+          export GITHUB_USER="$PACKAGES_USER"
+          export GITHUB_TOKEN="$PACKAGES_TOKEN"
+          ./gradlew $GRADLE_ARGS :app:check
+          # New work in this step, and only this: spotlessCheck (Google Java
+          # Format / ktfmt / ktlint) and jacocoTestCoverageVerification, which
+          # requires 90% LINE *and* 90% BRANCH across the whole bundle.
+          # "test" is NOT re-run: nothing between the steps mutates its inputs,
+          # and compileJava deliberately does not depend on spotlessApply, so
+          # no source file is rewritten mid-job.
+
+      - name: sonar
+        shell: bash
+        run: |
+          echo "=============================================================="
+          echo " STEP: sonar"
+          echo " ./gradlew :app:sonar"
+          echo "=============================================================="
+          export GITHUB_USER="$PACKAGES_USER"
+          export GITHUB_TOKEN="$PACKAGES_TOKEN"
+          ./gradlew $GRADLE_ARGS :app:sonar
+          # "sonar" dependsOn "check", which is now UP-TO-DATE, so this step
+          # only resolves the scanner and uploads the analysis. Because
+          # gradle.properties sets sonar.qualitygate.wait=true, it then BLOCKS
+          # until SonarCloud computes the quality gate and FAILS the job if the
+          # gate fails. That is intentional, and it is why sonar runs last.
+
+# ---------------------------------------------------------------------------
+# NOTE -- release-plugin re-triggering
+#
+# "net.researchgate.release" pushes two synthetic commits to main per release:
+#
+#   [Gradle Release Plugin] - pre tag commit:  '0.0.6'.
+#   [Gradle Release Plugin] - new version commit:  '0.0.7-SNAPSHOT'.
+#
+# Each therefore costs a full run and a SonarCloud analysis. That is accepted
+# here so that the trigger stays a literal "on push to main". To skip them, add
+# this to the job:
+#
+#   if: ${{ !contains(github.event.head_commit.message, '[Gradle Release Plugin]') }}
+# ---------------------------------------------------------------------------

@@ -20,22 +20,23 @@
 
 # ---------------------------------------------------------------------
 # --------------- >>> Stage 1: builder <<< ----------------------------
-# NOTE: amazoncorretto:25 is chosen deliberately, not incidentally. The
-# build pins "vendor = JvmVendorSpec.AMAZON" and "languageVersion = 25"
-# in app/build.gradle.kts. Gradle always considers the JVM running Gradle
-# as a toolchain candidate, and this image reports java.vendor
-# "Amazon.com Inc.", so the spec is satisfied by the JVM already present
-# and the foojay resolver never fires. A Temurin or gradle:* builder
-# would instead download an entire second ~200 MB Corretto JDK on every
-# cold build.
+# NOTE: this base is chosen deliberately, not incidentally. The build
+# pins "vendor = JvmVendorSpec.MICROSOFT" and "languageVersion = 25" in
+# app/build.gradle.kts. Gradle always considers the JVM running Gradle as
+# a toolchain candidate, and this image reports java.vendor "Microsoft"
+# at 25.0.4.1, so the spec is satisfied by the JVM already present and
+# the foojay resolver never fires. A Temurin, Corretto or gradle:*
+# builder would instead download an entire second ~200 MB Microsoft JDK
+# on every cold build. Keep this base in step with the vendor pinned in
+# the build script -- if one changes, the other must change with it.
+#
+# Unlike the Amazon Linux *minimal* images, this Ubuntu-based one already
+# ships "find" and "xargs", so no extra package install is needed. The
+# Gradle wrapper hard-requires xargs and aborts with "xargs is not
+# available" before doing anything else; the jar-selection step below
+# uses find. Do not switch to a slimmer base without re-checking both.
 # ---------------------------------------------------------------------
-FROM amazoncorretto:25 AS builder
-
-# The Corretto image is Amazon Linux 2023 *minimal*: it ships neither
-# "xargs" nor "find". The Gradle wrapper script hard-requires xargs and
-# aborts with "xargs is not available" before it does anything else, and
-# the jar-selection step below uses find. findutils supplies both.
-RUN dnf install -y findutils && dnf clean all && rm -rf /var/cache/dnf
+FROM mcr.microsoft.com/openjdk/jdk:25-ubuntu AS builder
 
 WORKDIR /build
 
@@ -146,7 +147,7 @@ LABEL org.opencontainers.image.title="spring-blueprint" \
       org.opencontainers.image.description="Blueprint Spring Boot Java project" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.source="https://github.com/rubensgomes-org/spring-blueprint" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.vendor="Rubens Gomes"
 
 # A real account rather than a bare numeric USER, so getpwuid() lookups

@@ -16,6 +16,7 @@ and when it runs.
 - [Publishing](#publishing)
 - [Releasing](#releasing)
 - [Static analysis](#static-analysis)
+- [Continuous integration](#continuous-integration)
 - [Diagnostics](#diagnostics)
 - [Troubleshooting](#troubleshooting)
 
@@ -30,32 +31,43 @@ and when it runs.
 | `./gradlew spotlessApply` | Reformat sources in place |
 | `./gradlew publishToMavenLocal` | Install into `~/.m2/repository` |
 | `./gradlew clean` | Delete `app/build/` |
-| `./gradlew :app:dependencies --write-locks` | Regenerate the dependency lock files |
+| `./gradlew :app:dependencies --write-locks` | Regenerate the `:app` dependency lock files |
+| `./gradlew :dependencies --write-locks` | Regenerate the root buildscript lock file |
 | `./gradlew dockerBuild` | Build the Docker image (requires a running daemon) |
 | `docker compose up --build -d` | Build and run the container |
 | `docker compose down` | Stop and remove the container |
+| `./gradlew release` | Cut a release (prefer `gh workflow run release.yml`) |
 
 Always use the wrapper (`./gradlew`), never a locally installed `gradle`. The
-wrapper pins **Gradle 9.7.0**.
+wrapper pins **Gradle 9.7.1**.
 
-There is one subproject, `app`, and the root project has no build script, so
+There is one subproject, `app`, which holds the entire application build, so
 `./gradlew build` and `./gradlew :app:build` are equivalent. The examples below
 use the short form.
+
+The root `build.gradle.kts` is a deliberate exception and stays minimal: it
+applies Spotless to the root Gradle scripts and nothing else, because Spotless
+cannot lint files outside its own project directory. See
+[Code formatting](#code-formatting).
 
 ## Prerequisites
 
 | Requirement | Detail |
 |---|---|
 | JDK to run Gradle | Any recent JDK; it does not have to match the toolchain |
-| Build toolchain | **Java 25, Amazon Corretto** — auto-downloaded by Gradle, no manual install |
+| Build toolchain | **Java 25, Microsoft Build of OpenJDK** — auto-downloaded by Gradle, no manual install |
 | `GITHUB_USER` / `GITHUB_TOKEN` | Required to resolve dependencies on a cold cache, and to publish |
 | `SONAR_TOKEN` | Required only by the `sonar` task |
 
-The Java 25 Corretto toolchain is declared in `app/build.gradle.kts` and
+The Java 25 Microsoft toolchain is declared in `app/build.gradle.kts` and
 provisioned automatically by the foojay resolver applied in
 `settings.gradle.kts`. Gradle downloads it into `~/.gradle/jdks/` on first use.
 Compilation and tests run on that toolchain regardless of which JDK started
 Gradle, so builds are reproducible across machines.
+
+The vendor is pinned to `JvmVendorSpec.MICROSOFT`, not left open. Changing it
+also means changing the Docker builder base image, which is deliberately chosen
+to satisfy this same spec — see [Docker](#docker).
 
 ### GitHub Packages credentials
 
@@ -78,14 +90,19 @@ with an unexplained HTTP 401.
 spring-blueprint/
 ├── settings.gradle.kts        # project inclusion, repositories, version catalog
 ├── settings-gradle.lockfile   # lock state: version catalog resolution
-├── gradle.properties          # developer identity, license, Sonar, Gradle daemon
+├── build.gradle.kts           # root script: spotless for the root scripts ONLY
+├── buildscript-gradle.lockfile     # lock state: root plugin classpath
+├── gradle.properties          # developer identity, license, SCM, Sonar, Gradle daemon
 ├── BUILD.md                   # this file
 ├── .editorconfig              # ktlint rules for *.gradle.kts
+├── .github/workflows/
+│   ├── build-verify.yml       # CI: compile, test, check, sonar on push to main
+│   └── release.yml            # manual: ./gradlew release
 └── app/
     ├── build.gradle.kts       # the entire build
     ├── gradle.lockfile        # lock state: application dependencies
     ├── buildscript-gradle.lockfile  # lock state: plugin classpath
-    ├── gradle.properties      # coordinates, version, SCM
+    ├── gradle.properties      # coordinates, version
     └── src/{main,test}/...
 ```
 
@@ -104,16 +121,16 @@ three sources.
 | `title` | `Specification-Title` manifest attribute, POM `<name>` |
 | `description` | POM `<description>` |
 | `mainClass` | Spring Boot entry point (`Start-Class`) |
-| `scmConnection`, `scmUrl` | POM `<scm>` |
 
 ### `gradle.properties` (root) — identity shared across projects
 
 | Property | Drives |
 |---|---|
 | `developerId`, `developerName`, `developerEmail` | Jar manifest, POM `<developers>` |
-| `license`, `licenseUrl` | POM `<licenses>` |
+| `license`, `licenseUrl` | POM `<licenses>` — currently `MIT License`; must match the root `LICENSE` file |
 | `mavenRepoPackages` | GitHub Packages URL, for both resolving and publishing |
-| `sonar.*` | SonarCloud coordinates |
+| `scmConnection`, `scmUrl` | POM `<scm>`, and the published POM `<url>` |
+| `sonar.*` | SonarCloud coordinates and quality-gate behaviour |
 | `org.gradle.*` | Daemon and logging behaviour |
 
 Read these with the `gradleProperty(name)` helper in `app/build.gradle.kts`,
@@ -148,13 +165,14 @@ make the *transitive* graph a moving target: the same source tree can resolve
 different transitive versions on different days. Dependency locking pins the
 fully resolved graph.
 
-Three lock files, with different scopes:
+Four lock files, with different scopes:
 
 | File | Locks | Configured in |
 |---|---|---|
 | `settings-gradle.lockfile` | the `libs` catalog resolution (`incomingCatalogForLibs0`) | nothing — Gradle locks version-catalog configurations automatically |
+| `buildscript-gradle.lockfile` (root) | the root script's plugin `classpath` — Spotless only | the "Buildscript Classpath Locking" section of the root `build.gradle.kts` |
 | `app/gradle.lockfile` | `annotationProcessor`, `compileClasspath`, `developmentOnly`, `runtimeClasspath`, `testAnnotationProcessor`, `testCompileClasspath`, `testRuntimeClasspath` | the "Dependency Locking" section of `app/build.gradle.kts` |
-| `app/buildscript-gradle.lockfile` | the plugin `classpath` — the libraries the Gradle plugins themselves pull in and run inside the build | the "Buildscript Classpath Locking" section of `app/build.gradle.kts` |
+| `app/buildscript-gradle.lockfile` | the `:app` plugin `classpath` — the libraries the Gradle plugins themselves pull in and run inside the build | the "Buildscript Classpath Locking" section of `app/build.gradle.kts` |
 
 The tooling's own *resolvable configurations* — `jacocoAgent`, `jacocoAnt` and
 friends — are deliberately left out of `app/gradle.lockfile`. None reaches the
@@ -174,6 +192,13 @@ pinning even though the coverage tooling's runtime graph is not.
 The plugin *versions* are already pinned by the catalog, so
 `app/buildscript-gradle.lockfile` adds the plugins' own transitive closure —
 code that runs inside the build but was previously unpinned.
+
+> **Note** — Spotless appears in the **root** `buildscript-gradle.lockfile`, not
+> in `app/buildscript-gradle.lockfile`, even though `app` uses it heavily. A
+> subproject inherits the root project's buildscript classpath, so once the root
+> script applies Spotless, `:app` stops resolving it independently and its lock
+> file legitimately no longer lists it. A Spotless version bump therefore means
+> regenerating the **root** lock file.
 
 > **Note** — `LockMode.STRICT` is set **twice** in `app/build.gradle.kts`, once
 > inside `buildscript { }` and once on the project. The two are independent: the
@@ -214,7 +239,15 @@ Regenerate whenever any of these change:
   touched
 - a locked configuration is added to or removed from `lockedConfigurations`
 
-All three lock files are committed to source control. Never pass `--write-locks` in
+The root `buildscript-gradle.lockfile` is **not** covered by that command, which
+is scoped to `:app`. It pins the root script's only plugin, Spotless, so it needs
+regenerating when the catalog moves the Spotless version:
+
+```bash
+./gradlew :dependencies --write-locks
+```
+
+All four lock files are committed to source control. Never pass `--write-locks` in
 an automated build: it would rewrite the lock state to match whatever resolved
 at that moment, which is precisely the unpredictability locking exists to
 prevent.
@@ -422,7 +455,48 @@ gate decorative.
 | `src/**/*.yaml`, `*.yml` | whitespace only | Jackson would delete every comment |
 | `*.gradle.kts` | ktlint | driven by the root `.editorconfig` |
 
-Java and Kotlin sources also get an Apache 2.0 licence header injected.
+Java and Kotlin sources also get a licence header injected — an
+`SPDX-License-Identifier: MIT` tag, the copyright line, and a pointer to
+`LICENSE` for the project's AI-content disclosures. The text is the
+`licenseHeaderText` constant in `app/build.gradle.kts`; edit it there, then run
+`./gradlew spotlessApply` to restamp every file.
+
+> **Note** — `licenseHeader` is configured on the `java` and `kotlin` formats
+> only, which target `src/**`. The headers on `settings.gradle.kts` and
+> `app/build.gradle.kts` carry the same licence text but are **not** managed by
+> Spotless and will not be restamped; they have to be edited by hand.
+
+Two ktlint constraints apply to the header on `app/build.gradle.kts`, and both
+fail `spotlessKotlinGradleCheck` rather than being auto-fixed:
+
+- It must be **one** block comment. The licence text is merged into the same
+  comment as the script documentation, separated by a dashed rule, because
+  `standard:no-consecutive-comments` rejects "a block comment ... preceded by a
+  block comment".
+- It must be a plain block comment, never KDoc — see the note below.
+
+The same two constraints apply to `settings.gradle.kts`, for the same reason.
+
+### Why there are two Spotless configurations
+
+A Spotless target is always resolved relative to the project that declares it,
+and Spotless rejects anything outside that directory outright:
+
+```
+Spotless error! All target files must be within the project dir.
+```
+
+So `app`'s Spotless block can never reach the root scripts, however its target
+is written. The root scripts are covered by a **second, minimal
+`spotless` block in the root `build.gradle.kts`**, whose only job is linting
+`settings.gradle.kts` and the root script itself. Application configuration
+still lives entirely in `app/build.gradle.kts`.
+
+`:app:check` depends on the root `spotlessCheck`, so `bootJar`, `build`,
+`release`, and CI — which invokes `:app:check`, not the unqualified `check` —
+all inherit it. Before that wiring existed the root scripts were linted by
+nothing, which is how a stale Apache-2.0 licence header and a trailing-
+whitespace violation both survived there unnoticed.
 
 To have formatting verified before every push:
 
@@ -517,23 +591,32 @@ build-time only, never written into an image layer or `docker history`.
 
 | Stage | Base | Does |
 |---|---|---|
-| `builder` | `amazoncorretto:25` | Runs `./gradlew :app:bootJar` |
+| `builder` | `mcr.microsoft.com/openjdk/jdk:25-ubuntu` | Runs `./gradlew :app:bootJar` |
 | `extractor` | `eclipse-temurin:25-jre-alpine` | Explodes the layered jar |
 | `runtime` | `eclipse-temurin:25-jre-alpine` | Non-root JRE image |
 
-**The builder installs `findutils`.** `amazoncorretto:25` is Amazon Linux 2023
-*minimal* and ships neither `xargs` nor `find`. The Gradle wrapper script
-hard-requires `xargs` and aborts with `xargs is not available` before doing
-anything else. Do not remove that `dnf install`.
+**Why a Microsoft base for the builder.** The build pins
+`vendor = JvmVendorSpec.MICROSOFT` alongside `languageVersion = 25`. Gradle
+treats the JVM running Gradle as a toolchain candidate, and this base reports
+`java.vendor` `Microsoft`, so the spec is satisfied by the JVM already in the
+image and the foojay resolver never fires. A Temurin, Corretto or `gradle:*`
+builder would download a second ~200 MB JDK on every cold build. The Dockerfile
+also passes `-Porg.gradle.java.installations.auto-download=false`, so if the
+base image is ever changed to a non-Microsoft one the build fails in seconds
+with "No matching toolchain" rather than silently paying that download on every
+run.
 
-**Why Corretto for the builder.** The build pins
-`vendor = JvmVendorSpec.AMAZON` alongside `languageVersion = 25`. Gradle treats
-the JVM running Gradle as a toolchain candidate, and this base satisfies the
-spec, so the foojay resolver never fires. A Temurin or `gradle:*` builder would
-download a second ~200 MB JDK on every cold build. The Dockerfile also passes
-`-Porg.gradle.java.installations.auto-download=false`, so if the base image is
-ever changed to a non-Corretto one the build fails in seconds with "No matching
-toolchain" rather than silently paying that download on every run.
+**The toolchain vendor and the builder base are one decision.** Changing
+`vendor` in `app/build.gradle.kts` without changing `FROM` in the Dockerfile
+breaks `docker build` while leaving host builds green, because the host has the
+foojay resolver available and the builder stage deliberately does not.
+
+**The builder needs no `findutils` install.** The Gradle wrapper hard-requires
+`xargs` and aborts with `xargs is not available` before doing anything else, and
+the jar-selection step uses `find`. The Ubuntu-based Microsoft image ships both
+already — unlike the Amazon Linux *minimal* images, which shipped neither and
+needed an explicit `dnf install`. Do not move to a slimmer base such as
+`25-distroless` without re-checking both tools.
 
 **Why alpine for the runtime.** busybox supplies `wget` for the `HEALTHCHECK` at
 no extra size; the Ubuntu-based Temurin JRE images ship neither `wget` nor
@@ -659,6 +742,48 @@ coverage gate.
 > which is why `org.gradle.configuration-cache=false` is set in the root
 > `gradle.properties`.
 
+### Releasing from CI
+
+`.github/workflows/release.yml` runs exactly that command on a runner. It is the
+preferred way to cut a release: the runner always starts from a clean checkout of
+`main`, which is the state the plugin's preconditions assume.
+
+```bash
+gh workflow run release.yml
+```
+
+or the **Run workflow** button on the Actions tab.
+
+**`workflow_dispatch` only — there is no push or schedule trigger.** A release is
+a deliberate act, and unlike `build-verify.yml` this workflow *writes* to the
+repository. That difference drives everything else about it:
+
+| Setting | Why |
+|---|---|
+| `permissions: contents: write` | It pushes two commits, a tag, and the `release` branch |
+| `ref: main`, `fetch-depth: 0` on checkout | `requireBranch` is `main`, and the plugin diffs local against remote — a shallow or detached checkout breaks the branch check and tag creation |
+| `token: ${{ secrets.RUBENS_PAT_TOKEN }}` on checkout | The token checkout persists is what the plugin's own `git push` uses. It must be a PAT — see below |
+| `concurrency`, `cancel-in-progress: false` | Two releases would race to tag from the same starting point, and interrupting a half-finished release leaves tags and commits inconsistent |
+
+**It configures a git identity before releasing.** The plugin makes two commits,
+and a runner has no `user.name` or `user.email`, so a release would otherwise
+fail at `preTagCommit`. The values are read out of `gradle.properties`
+(`developerName`, `developerEmail`) rather than hardcoded, so the maintainer
+identity is not written down in a second place.
+
+**Why a PAT rather than the automatic token.** A push made with the per-run
+`GITHUB_TOKEN` does not trigger other workflows — GitHub suppresses that to
+prevent recursion. Using it here would mean the released commit is never
+verified by `build-verify.yml`. The PAT restores that, at the cost of each
+release triggering roughly two extra `build-verify` runs, one per pushed commit.
+
+**Two things that will stop the first run:**
+
+- The workflow must exist on the **default branch** before `workflow_dispatch`
+  offers it at all.
+- **Branch protection on `main` will reject the push.** The PAT needs write
+  access and, where protection is enabled, an exemption.
+
 ## Static analysis
 
 ```bash
@@ -669,9 +794,116 @@ export SONAR_TOKEN=<token>
 Depends on `check`, so tests and the coverage report always precede analysis.
 The `sonarqube` task is a deprecated alias for `sonar`.
 
-> **Note** — `sonar.projectKey` and `sonar.organization` in the root
-> `gradle.properties` are the placeholders `@SONAR_PROJECT_KEY@` and
-> `@SONAR_ORGANIZATION@`. Substitute real values before analysis is meaningful.
+All coordinates live in the root `gradle.properties`:
+
+| Property | Value |
+|---|---|
+| `sonar.host.url` | `https://sonarcloud.io` |
+| `sonar.organization` | `rubensgomes-org` |
+| `sonar.projectKey` | `rubensgomes-org_spring-blueprint` |
+| `sonar.projectName` | `spring-blueprint` |
+| `sonar.qualitygate.wait` | `true` |
+
+`sonar.qualitygate.wait=true` makes `sonar` **block** after uploading, poll
+until SonarCloud finishes processing, and then fail the build when the quality
+gate fails. The default is `false`, where the task succeeds the moment the
+upload is accepted and a failing gate is something you only find out about in
+the SonarCloud UI. The cost of the stricter setting: the task now takes as long
+as server-side analysis, and `SONAR_TOKEN` must be able to read gate status, not
+just submit.
+
+Cloning this project as a template means replacing `sonar.organization`,
+`sonar.projectKey`, and `sonar.projectName` with your own.
+
+## Continuous integration
+
+Two workflows, with opposite postures:
+
+| Workflow | Trigger | Writes to the repo? |
+|---|---|---|
+| `build-verify.yml` | every push to `main` | No — `permissions: contents: read` |
+| `release.yml` | manual (`workflow_dispatch`) | **Yes** — commits, a tag, the `release` branch |
+
+`release.yml` is covered under [Releasing from CI](#releasing-from-ci). The rest
+of this section is about `build-verify.yml`.
+
+Both share the same three setup steps — checkout, `setup-java` with
+`distribution: microsoft`, `setup-gradle` — and the same `GRADLE_ARGS`, and both
+carry GitHub Packages credentials in `PACKAGES_USER` / `PACKAGES_TOKEN` because
+the `GITHUB_` prefix is reserved. Change one and consider whether the other needs
+the same change.
+
+### `build-verify.yml`
+
+It runs the same gate on every push to `main`, through the committed wrapper, so
+CI and a workstation execute identical Gradle.
+
+One job, `build-verify`, on `ubuntu-latest`. Three setup steps, then the four
+verification phases:
+
+| Step | Command | What it adds |
+|---|---|---|
+| `compile` | `:app:classes :app:testClasses` | `processResources`, `compileJava`, `compileTestJava` |
+| `test` | `:app:test` | `test`, `jacocoTestReport` |
+| `check` | `:app:check` | `spotless*Check`, `jacocoTestCoverageVerification` |
+| `sonar` | `:app:sonar` | `sonarResolver`, `sonar` |
+
+### Why four invocations instead of one
+
+`sonar` already depends on `check`, which depends on `test`, so `./gradlew
+:app:sonar` alone would run everything. Splitting it gives four independently
+red/green steps, so a failure names a phase instead of burying it in one 23-task
+log.
+
+It is not wasteful. All four steps share a workspace and a daemon, and
+up-to-date state persists in `app/.gradle`, not in daemon memory — each step
+finds the previous step's work `UP-TO-DATE` and adds only its own. In
+particular, `test` does **not** re-run during `check`, and Spotless runs once.
+The real cost is configuration time ×4, because the release plugin forces
+`org.gradle.configuration-cache=false`.
+
+### Required secrets
+
+| Secret | Used as | Notes |
+|---|---|---|
+| `RUBENS_PAT_TOKEN` | `GITHUB_TOKEN` | Classic PAT with `read:packages` |
+| `SONAR_TOKEN` | `SONAR_TOKEN` | Must be able to **read quality gate status**, not just submit |
+
+Both are organization-level secrets shared with this repository.
+
+`GITHUB_USER` and `GITHUB_TOKEN` cannot be declared in a workflow `env:` block —
+GitHub reserves the `GITHUB_` prefix. The values therefore ride in
+`PACKAGES_USER` / `PACKAGES_TOKEN` and each step exports the real names into its
+own shell. They are needed by **every** invocation, not just the first, because
+`settings.gradle.kts` reads them while evaluating settings.
+
+### Toolchain and the vendor pin
+
+The workflow installs the JDK with `actions/setup-java`, `distribution:
+microsoft`, `java-version: 25` — matching `JvmVendorSpec.MICROSOFT` so Gradle
+reuses the JVM it is already running on. It then passes
+`-Porg.gradle.java.installations.auto-download=false`, exactly as the Dockerfile
+does, so a drift between the vendor pin and the runner distribution fails in
+seconds with "No matching toolchains" instead of silently downloading a second
+JDK on every run. Expect the runner's preinstalled Temurin JDKs to appear in
+that error as detected-but-rejected — that is the pin working.
+
+Change the vendor in `app/build.gradle.kts` and you must change **three** places
+in step: the toolchain block, the Dockerfile `FROM`, and `distribution:` here.
+
+### Other details worth knowing
+
+- **`fetch-depth: 0`.** SonarCloud derives New Code detection, blame, and issue
+  backdating from git history; a shallow clone degrades analysis silently.
+- **`shell: bash` is pinned** on all four steps. They expand `$GRADLE_ARGS`
+  unquoted and so depend on word splitting — bash splits, zsh does not.
+- **Never add `--write-locks`.** Locking runs in `LockMode.STRICT`; CI's job is
+  to fail on lock drift, not to paper over it.
+- **`cancel-in-progress: false`.** `main` is the verification gate, so every
+  commit gets a verdict rather than only the newest.
+- **The release plugin re-triggers CI.** It pushes two commits per release to
+  `main`, each costing a run and a SonarCloud analysis. The workflow's closing
+  comment carries the `if:` guard to suppress them if that ever matters.
 
 ## Diagnostics
 
