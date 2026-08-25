@@ -1,11 +1,5 @@
 /*
  * SPDX-License-Identifier: MIT
- *
- * Copyright (c) 2026 Rubens Gomes
- *
- * This file may contain content generated or assisted by Artificial Intelligence
- * tools and subsequently reviewed and modified by human contributors.
- * See the LICENSE file for licensing terms and additional AI disclosures.
  */
 package com.rubensgomes.blueprint.model.response;
 

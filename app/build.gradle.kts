@@ -1,12 +1,6 @@
 /*
  * SPDX-License-Identifier: MIT
  *
- * Copyright (c) 2026 Rubens Gomes
- *
- * This file may contain content generated or assisted by Artificial Intelligence
- * tools and subsequently reviewed and modified by human contributors.
- * See the LICENSE file for licensing terms and additional AI disclosures.
- *
  * ---------------------------------------------------------------------
  *
  * Blueprint Gradle build script (Kotlin DSL) used by Rubens Gomes
@@ -461,16 +455,10 @@ tasks.jacocoTestCoverageVerification {
 }
 
 // "check" is what CI and the "bootJar" task run, so wiring the verification
-// in here is what makes the threshold binding.
-//
-// The root project's spotlessCheck is wired in for the same reason. It lints
-// the root Gradle scripts, which this project's own spotless block cannot
-// reach, and CI invokes ":app:check" rather than the unqualified "check" --
-// so without this dependency the root scripts would be format-checked by
-// nothing. Hanging it here means bootJar, build and release inherit it too.
+// in here is what makes the threshold binding. Hanging it here means bootJar,
+// build and release inherit it too.
 tasks.check {
     dependsOn(tasks.jacocoTestCoverageVerification)
-    dependsOn(rootProject.tasks.named("spotlessCheck"))
 }
 
 // ---------------------------------------------------------------------
@@ -596,12 +584,6 @@ val licenseHeaderText =
     """
     /*
      * SPDX-License-Identifier: MIT
-     *
-     * Copyright (c) 2026 Rubens Gomes
-     *
-     * This file may contain content generated or assisted by Artificial Intelligence
-     * tools and subsequently reviewed and modified by human contributors.
-     * See the LICENSE file for licensing terms and additional AI disclosures.
      */
     """.trimIndent()
 
@@ -658,9 +640,10 @@ spotless {
     // Kotlin Gradle DSL formatting.
     // NOTE: this target is resolved relative to THIS project directory, so it
     // covers "app/build.gradle.kts" only. Spotless refuses targets outside the
-    // project dir ("All target files must be within the project dir"), so the
-    // root scripts cannot be reached from here -- the root build script owns
-    // them instead. See the spotless block in "build.gradle.kts".
+    // project dir ("All target files must be within the project dir"), so
+    // "settings.gradle.kts" cannot be reached from here however this target is
+    // written. There is no root build script to cover it either, so that file
+    // is format-checked by nothing and is maintained by hand.
     kotlinGradle {
         target("*.gradle.kts")
         // ktlint, driven by the root .editorconfig for fine-grained control
@@ -766,12 +749,10 @@ tasks.bootJar {
 // NOTE: this shells out to the "docker" CLI rather than using a Gradle
 // Docker plugin. The shared catalog does expose
 // alias(libs.plugins.docker.remote.api) (com.bmuschko.docker-remote-api),
-// but that plugin drives the Docker Engine REST API, which uses the
-// legacy builder. The Dockerfile here REQUIRES BuildKit -- the "# syntax"
-// directive, "--mount=type=secret" for the GitHub Packages credentials
-// and "--mount=type=cache" for the Gradle home. On the legacy builder the
-// secret mounts simply do not exist, so Gradle inside the container would
-// fail to resolve the version catalog with an HTTP 401.
+// but that plugin drives the Docker Engine REST API, which offers no
+// ergonomic way to forward the two GitHub Packages credentials the builder
+// stage needs, and the CLI is what every other consumer of this Dockerfile
+// already uses.
 //
 // NOTE: deliberately NOT wired to "bootJar" or "build". The Dockerfile
 // compiles the application inside its own builder stage, so depending on
@@ -782,7 +763,7 @@ tasks.bootJar {
 // is not part of the normal verification loop, and wiring it in would
 // make every "./gradlew build" require a running Docker daemon.
 // ---------------------------------------------------------------------
-// https://docs.docker.com/build/building/secrets/
+// https://docs.docker.com/build/building/variables/#build-arguments
 
 // Both tags come from the same properties the jar and the POM use, so the
 // image coordinate is never a second source of truth.
@@ -796,18 +777,22 @@ tasks.register<Exec>("dockerBuild") {
     // The build context is the repository root, not this subproject.
     workingDir = rootDir
 
-    // Docker 23+ defaults to BuildKit, but an older client or a
-    // DOCKER_BUILDKIT=0 in the environment would silently fall back to the
-    // legacy builder and drop the secret mounts, so pin it.
+    // The Dockerfile no longer needs BuildKit -- it must stay buildable by
+    // ACR Tasks, which runs the classic builder -- but BuildKit is still
+    // wanted locally for its parallel stages and better caching, and an
+    // older client or a DOCKER_BUILDKIT=0 would silently fall back. Pin it.
     environment("DOCKER_BUILDKIT", "1")
 
+    // GITHUB_USER and GITHUB_TOKEN are passed WITHOUT a value on purpose.
+    // Docker then reads each from this task's environment, so the token never
+    // appears in the docker process argv where "ps" could read it.
     commandLine(
         "docker",
         "build",
-        "--secret",
-        "id=github_user,env=GITHUB_USER",
-        "--secret",
-        "id=github_token,env=GITHUB_TOKEN",
+        "--build-arg",
+        "GITHUB_USER",
+        "--build-arg",
+        "GITHUB_TOKEN",
         "--build-arg",
         "APP_VERSION=$version",
         "--tag",
@@ -827,11 +812,11 @@ tasks.register<Exec>("dockerBuild") {
         if (missing.isNotEmpty()) {
             throw GradleException(
                 "${missing.joinToString(" and ")} must be exported before running " +
-                    "dockerBuild. The image build resolves the shared " +
-                    "'com.rubensgomes:gradle-catalog' version catalog from GitHub " +
-                    "Packages inside its builder stage, which always starts from a " +
-                    "cold Gradle cache and therefore cannot fall back to local " +
-                    "artifacts.",
+                    "dockerBuild. They are forwarded to the image as build args, " +
+                    "which resolve their values from this environment. The builder " +
+                    "stage resolves the shared 'com.rubensgomes:gradle-catalog' " +
+                    "version catalog from GitHub Packages, always from a cold Gradle " +
+                    "cache, and therefore cannot fall back to local artifacts.",
             )
         }
     }

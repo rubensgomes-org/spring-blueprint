@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: MIT
 #
-# Copyright (c) 2026 Rubens Gomes
-#
 # This file may contain content generated or assisted by Artificial Intelligence
 # tools and subsequently reviewed and modified by human contributors.
 # See the LICENSE file for licensing terms and additional AI disclosures.
@@ -33,7 +31,7 @@
 #   build-verify.yml. That is expected.
 #
 # PRECONDITIONS (the plugin fails the build if any is unmet)
-#   - the current branch is "main"          -> requireBranch in build.gradle.kts
+#   - the current branch is "main"          -> requireBranch in app/build.gradle.kts
 #   - the working tree is clean, with nothing unpushed or unpulled
 #   - "version" in app/gradle.properties ends in "-SNAPSHOT"
 #   - no SNAPSHOT dependencies

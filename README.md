@@ -1,9 +1,6 @@
 # spring-blueprint
 
-A working Spring Boot microservice that doubles as a reference build and a
-sandbox.
-
-It exists for three reasons:
+A basic Spring Boot RESTful application to serve as:
 
 1. **A blueprint to copy.** A complete, opinionated Gradle build — toolchains,
    formatting, coverage gates, publishing, releasing, static analysis — already
@@ -11,16 +8,8 @@ It exists for three reasons:
    new project.
 2. **A demonstration.** Spring Boot layering and design patterns shown in code
    small enough to read in one sitting.
-3. **A laboratory.** A stable base for experimenting with new technologies,
-   CI/CD workflows, and cloud deployments without risking anything real.
-
----
-
-## AI-Assisted Development
-
-This project was developed primarily using AI-assisted code generation. All
-generated content was reviewed, tested, and refined by human contributors. See
-the LICENSE file for additional information regarding AI-generated content.
+3. **A CI/CD reference.** GitHub Actions workflows that build, verify, and cut
+   a release.
 
 ## Quick start
 
@@ -60,11 +49,6 @@ docker compose down               # stop and remove
 Needs nothing installed but Docker — the image compiles the application in its
 own builder stage. Activates the `docker` profile.
 
-> **The first image build is slow.** `bootJar` depends on `check`, so the full
-> test suite and coverage gate run *inside* the builder stage. That is
-> deliberate: the image cannot be built from code that has not passed
-> verification. Subsequent builds hit the layer cache.
-
 ### Verify either one
 
 ```bash
@@ -77,57 +61,13 @@ curl http://localhost:8080/actuator/health
 
 ### Stopping it
 
-**Gradle** — press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal running
-`bootRun`. That is the correct way; it shuts down gracefully, draining in-flight
-requests before the JVM exits.
+**Gradle** — <kbd>Ctrl</kbd>+<kbd>C</kbd> in the `bootRun` terminal. Shutdown is
+graceful, but its logs are discarded and Gradle then prints `BUILD FAILED`. Both
+are expected; [BUILD.md](BUILD.md#stopping-the-application) explains why, and
+how to watch the shutdown instead.
 
-> **The shutdown logs will not appear, even though the shutdown ran.**
-> <kbd>Ctrl</kbd>+<kbd>C</kbd> signals your terminal's foreground process group,
-> which holds only the thin `gradlew` client. The application JVM is a child of
-> the Gradle *daemon* and sits in a different process group entirely. The
-> daemon does SIGTERM it once the client goes away, so the graceful path runs
-> in full — but the client that was rendering the daemon's output has already
-> exited, so every line logged from that point on is discarded.
-
-To watch the shutdown instead of just trusting it, leave `bootRun` running and
-send SIGTERM from a second terminal. The Gradle client stays attached, so the
-logs render live in the `bootRun` terminal:
-
-```bash
-kill $(pgrep -f com.rubensgomes.blueprint.App)
-```
-
-```
-INFO ... AppShutdownEventListener  : Handling SIGTERM
-INFO ... GracefulShutdown          : Commencing graceful shutdown ...
-INFO ... GracefulShutdown          : Graceful shutdown complete
-INFO ... HelloWorldService         : I am being terminated.
-```
-
-The argument to `pgrep -f` is the fully qualified main class — the `mainClass`
-property in `app/gradle.properties` — which is what identifies this JVM among
-the several Java processes a Gradle build leaves running.
-`kill $(lsof -ti tcp:8080)` works too, and is the better choice if you have
-lost track of which application is holding the port.
-
-> **Gradle then prints `BUILD FAILED`. That is expected, not an error.** The
-> forked application JVM was terminated by a signal, so it exits non-zero and
-> Gradle reports the `bootRun` task as failed. The shutdown still ran cleanly.
-
-> **`./gradlew --stop` does not stop the application.** It stops the Gradle
-> *daemon*, which is a different process; the app keeps running.
-
-**Docker** — either of:
-
-```bash
-docker compose down      # stop and remove the container and network
-docker compose stop      # stop, but keep the container for a later start
-```
-
-Both send SIGTERM to the JVM, which runs as PID 1 in the container, so the same
-graceful shutdown applies. Compose allows `stop_grace_period: 15s` before
-resorting to SIGKILL — comfortably more than the 5s
-`spring.lifecycle.timeout-per-shutdown-phase` needs.
+**Docker** — `docker compose down`. SIGTERM reaches the JVM as PID 1, so the
+same graceful shutdown applies.
 
 ### Which to use
 
@@ -160,47 +100,14 @@ Credentials are only ever needed at **build** time; see
 | Container  | Multi-stage Docker build on eclipse-temurin JRE   |
 | CI         | GitHub Actions — verify on push, manual release   |
 
-Versions are never hard-coded in the build script. Every plugin and library
-resolves through the shared version catalog, and library versions come from the
-Spring Boot BOM.
+## Versioning
 
-That pins the *declared* versions; four lock files pin the *transitive* graph
-on top of it, so the same source tree resolves identically on any machine and on
-any day.
-
-> **Changing the catalog version requires regenerating the lock state.** Bumping
-> `com.rubensgomes:gradle-catalog` in `settings.gradle.kts` on its own **breaks
-> the build**. A lock file is a forcing constraint, not a checksum, so the old
-> version wins and then fails to match what you declared:
->
-> ```
-> > Did not resolve 'com.rubensgomes:gradle-catalog:0.2.1' which is part of the dependency lock state
-> > Cannot find a version of 'com.rubensgomes:gradle-catalog' that satisfies the version constraints:
->       'com.rubensgomes:gradle-catalog:{strictly 0.2.1}' because of the following reason:
->       Dependency version enforced by Dependency Locking
-> ```
->
-> The fix is always the same — regenerate, then commit `settings.gradle.kts` and
-> the lock files **together**. Splitting them across commits reproduces this
-> failure for everyone else.
-
-Regenerate after changing a dependency, the set of locked configurations, or the
-catalog version:
+The build uses locked dependency versions. Any catalog change that moves a
+library or framework version requires regenerating the lock files:
 
 ```bash
 ./gradlew :app:dependencies --write-locks
 ```
-
-This needs `GITHUB_USER` and `GITHUB_TOKEN` exported: lock state is written from
-a real resolution against GitHub Packages and cannot be produced `--offline`
-from a warm cache. If the build instead reports
-`Resource missing ... repo.maven.apache.org/.../gradle-catalog-<version>.pom`,
-those variables are unset — the catalog is not on Maven Central, so resolution
-fell through to it and 404'd.
-
-Bumping the catalog does not necessarily change anything downstream. If the
-catalog declares the same versions this project already uses, only
-`settings-gradle.lockfile` changes and the others come back byte-identical.
 
 Locking runs in strict mode — a missing lock file fails the build rather than
 quietly resolving whatever is newest. Details in
@@ -211,9 +118,8 @@ quietly resolving whatever is newest. Details in
 ### Layered architecture
 
 ```
-web/controller  →  service  →  model/response
-HelloWorld-         HelloWorld-   MessageResponse
-RestController      Service
+HelloWorldRestController  →  HelloWorldService  →  MessageResponse
+(web/controller)             (service)             (model/response)
 ```
 
 The controller owns HTTP concerns only — routing, status codes, content
@@ -224,20 +130,19 @@ layer means editing one class.
 
 ### Patterns in the code
 
-| Pattern                | Where                                              | Why it's there                                                                                                                   |
-|------------------------|----------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
-| Constructor injection  | `HelloWorldRestController`                         | Dependencies are explicit and final; the class is trivially unit-testable without a Spring context                               |
-| Immutable value object | `MessageResponse`                                  | A `record`: implicitly final, components final, accessor/`equals`/`hashCode`/`toString` generated — safe to share across threads |
-| Observer               | `AppInitEventListener`, `AppShutdownEventListener` | Lifecycle concerns react to Spring `ApplicationEvent`s instead of being wired into startup code                                  |
-| Declarative validation | `MessageResponse`                                  | Jakarta Bean Validation constraints on the model, so validation travels with the data                                            |
-| Graceful shutdown      | `HelloWorldService.cleanup()`, `application.yml`   | `@PreDestroy` plus a 5s shutdown phase — in-flight requests finish before the JVM exits                                          |
-| Uniform error contract | `GlobalErrorController`, `ErrorResponse`           | One `/error` mapping renders every failure as JSON, so a REST client never receives an HTML error page                           |
-| Environment profiles   | `application-{local,docker}.yml`                   | The quiet production default is overridden per environment rather than edited in place                                           |
+| Pattern                | Where                                              | Why it's there                                        |
+|------------------------|----------------------------------------------------|-------------------------------------------------------|
+| Constructor injection  | `HelloWorldRestController`                         | Explicit, final dependencies; testable without Spring |
+| Immutable value object | `MessageResponse`                                  | A `record` — safe to share across threads             |
+| Observer               | `AppInitEventListener`, `AppShutdownEventListener` | Lifecycle logic reacts to events, not startup code    |
+| Declarative validation | `MessageResponse`                                  | Constraints travel with the data                      |
+| Graceful shutdown      | `HelloWorldService.cleanup()`, `application.yml`   | In-flight requests finish before the JVM exits        |
+| Uniform error contract | `GlobalErrorController`, `ErrorResponse`           | Every failure renders as JSON, never an HTML page     |
+| Environment profiles   | `application-{local,docker}.yml`                   | Overridden per environment, not edited in place       |
 
 ### Testing approach
 
-35 tests, 100% coverage, several distinct styles deliberately shown side by
-side:
+35 tests at 100% coverage, in several deliberately distinct styles:
 
 - **Pure unit tests** with no Spring context (`HelloWorldServiceTest`)
 - **Mockito** with `@Mock` and static mocking (`AppMainTest`,
@@ -265,9 +170,6 @@ side:
 | `docker compose up --build -d`              | Build and run the container image                    |
 | `docker compose down`                       | Stop and remove the container                        |
 
-Full task reference, wiring diagrams, and troubleshooting:
-**[BUILD.md](BUILD.md)**.
-
 ## Project layout
 
 ```
@@ -277,8 +179,6 @@ spring-blueprint/
 ├── .dockerignore              # build-context exclusions
 ├── settings.gradle.kts        # inclusion, repositories, version catalog
 ├── settings-gradle.lockfile   # lock state: version catalog resolution
-├── build.gradle.kts           # root script: spotless for the root scripts ONLY
-├── buildscript-gradle.lockfile     # lock state: root plugin classpath
 ├── gradle.properties          # developer identity, license, SCM, Sonar, daemon
 ├── BUILD.md                   # build documentation
 ├── llms.txt                   # machine-readable project index
@@ -327,25 +227,10 @@ property instead.
 Everything else — toolchain, formatting, coverage gate, publishing, release
 flow — carries over unchanged.
 
-## Roadmap
-
-The laboratory half of this project. Nothing here is committed to a date:
-
-- [x] CI verification (GitHub Actions: compile, test, check, sonar on push to
-  `main`)
-- [x] Release from CI (GitHub Actions: manual `release.yml`)
-- [ ] CD workflows — publish and deploy from CI
-- [x] Containerisation — multi-stage `Dockerfile` + `docker-compose.yml`
-- [ ] Cloud deployment targets
-- [ ] Persistence layer with a real domain model
-- [ ] OpenAPI documentation (`springdoc-openapi` is in the catalog)
-- [ ] Observability beyond Actuator defaults
-- [ ] Integration test source set separate from unit tests
-
 ## Documentation
 
 | Document                       | Contents                                                        |
-|--------------------------------|-----------------------------------------------------------------|
+|--------------------------------|----------------------------------------------------------------|
 | [BUILD.md](BUILD.md)           | Every Gradle task, when it runs, how to run it, troubleshooting |
 | [llms.txt](llms.txt)           | Machine-readable index for AI coding assistants                 |
 | [LICENSE](LICENSE)             | MIT terms, plus AI-content and copyright-status notices         |
@@ -355,7 +240,7 @@ The laboratory half of this project. Nothing here is committed to a date:
 
 [MIT License](LICENSE). Author: [Rubens Gomes](https://rubensgomes.com).
 
-Source files carry an `SPDX-License-Identifier: MIT` header, injected and
-verified by Spotless. The [LICENSE](LICENSE) file also carries the project's
-AI-generated content, third-party content, and copyright-status notices — read
-it rather than the SPDX tag alone.
+This project was developed primarily with AI-assisted code generation; all
+generated content was reviewed, tested, and refined by human contributors. The
+[LICENSE](LICENSE) file carries the full AI-content, third-party content, and
+copyright-status notices — read it rather than the SPDX tag alone.

@@ -1,7 +1,7 @@
 # Build Guide
 
-How the Gradle build for `spring-blueprint` is put together, what each task does,
-and when it runs.
+How the Gradle build for `spring-blueprint` is put together, what each task
+does, and when it runs.
 
 - [Quick reference](#quick-reference)
 - [Prerequisites](#prerequisites)
@@ -22,21 +22,20 @@ and when it runs.
 
 ## Quick reference
 
-| Command | Purpose |
-|---|---|
-| `./gradlew bootRun` | Run the app locally on port 8080 |
-| `./gradlew test` | Run the JUnit 5 suite (coverage report always follows) |
-| `./gradlew check` | Format check + tests + 90% coverage gate |
-| `./gradlew build` | `check` + assemble all four jars |
-| `./gradlew spotlessApply` | Reformat sources in place |
-| `./gradlew publishToMavenLocal` | Install into `~/.m2/repository` |
-| `./gradlew clean` | Delete `app/build/` |
-| `./gradlew :app:dependencies --write-locks` | Regenerate the `:app` dependency lock files |
-| `./gradlew :dependencies --write-locks` | Regenerate the root buildscript lock file |
-| `./gradlew dockerBuild` | Build the Docker image (requires a running daemon) |
-| `docker compose up --build -d` | Build and run the container |
-| `docker compose down` | Stop and remove the container |
-| `./gradlew release` | Cut a release (prefer `gh workflow run release.yml`) |
+| Command                                     | Purpose                                                |
+|---------------------------------------------|--------------------------------------------------------|
+| `./gradlew bootRun`                         | Run the app locally on port 8080                       |
+| `./gradlew test`                            | Run the JUnit 5 suite (coverage report always follows) |
+| `./gradlew check`                           | Format check + tests + 90% coverage gate               |
+| `./gradlew build`                           | `check` + assemble all four jars                       |
+| `./gradlew spotlessApply`                   | Reformat sources in place                              |
+| `./gradlew publishToMavenLocal`             | Install into `~/.m2/repository`                        |
+| `./gradlew clean`                           | Delete `app/build/`                                    |
+| `./gradlew :app:dependencies --write-locks` | Regenerate the `:app` dependency lock files            |
+| `./gradlew dockerBuild`                     | Build the Docker image (requires a running daemon)     |
+| `docker compose up --build -d`              | Build and run the container                            |
+| `docker compose down`                       | Stop and remove the container                          |
+| `./gradlew release`                         | Cut a release (prefer `gh workflow run release.yml`)   |
 
 Always use the wrapper (`./gradlew`), never a locally installed `gradle`. The
 wrapper pins **Gradle 9.7.1**.
@@ -45,19 +44,18 @@ There is one subproject, `app`, which holds the entire application build, so
 `./gradlew build` and `./gradlew :app:build` are equivalent. The examples below
 use the short form.
 
-The root `build.gradle.kts` is a deliberate exception and stays minimal: it
-applies Spotless to the root Gradle scripts and nothing else, because Spotless
-cannot lint files outside its own project directory. See
+There is no root `build.gradle.kts`. `settings.gradle.kts` is the only Gradle
+script at the repository root, and nothing format-checks it — see
 [Code formatting](#code-formatting).
 
 ## Prerequisites
 
-| Requirement | Detail |
-|---|---|
-| JDK to run Gradle | Any recent JDK; it does not have to match the toolchain |
-| Build toolchain | **Java 25, Microsoft Build of OpenJDK** — auto-downloaded by Gradle, no manual install |
-| `GITHUB_USER` / `GITHUB_TOKEN` | Required to resolve dependencies on a cold cache, and to publish |
-| `SONAR_TOKEN` | Required only by the `sonar` task |
+| Requirement                    | Detail                                                                                 |
+|--------------------------------|----------------------------------------------------------------------------------------|
+| JDK to run Gradle              | Any recent JDK; it does not have to match the toolchain                                |
+| Build toolchain                | **Java 25, Microsoft Build of OpenJDK** — auto-downloaded by Gradle, no manual install |
+| `GITHUB_USER` / `GITHUB_TOKEN` | Required to resolve dependencies on a cold cache, and to publish                       |
+| `SONAR_TOKEN`                  | Required only by the `sonar` task                                                      |
 
 The Java 25 Microsoft toolchain is declared in `app/build.gradle.kts` and
 provisioned automatically by the foojay resolver applied in
@@ -86,25 +84,7 @@ with an unexplained HTTP 401.
 
 ## Project layout
 
-```
-spring-blueprint/
-├── settings.gradle.kts        # project inclusion, repositories, version catalog
-├── settings-gradle.lockfile   # lock state: version catalog resolution
-├── build.gradle.kts           # root script: spotless for the root scripts ONLY
-├── buildscript-gradle.lockfile     # lock state: root plugin classpath
-├── gradle.properties          # developer identity, license, SCM, Sonar, Gradle daemon
-├── BUILD.md                   # this file
-├── .editorconfig              # ktlint rules for *.gradle.kts
-├── .github/workflows/
-│   ├── build-verify.yml       # CI: compile, test, check, sonar on push to main
-│   └── release.yml            # manual: ./gradlew release
-└── app/
-    ├── build.gradle.kts       # the entire build
-    ├── gradle.lockfile        # lock state: application dependencies
-    ├── buildscript-gradle.lockfile  # lock state: plugin classpath
-    ├── gradle.properties      # coordinates, version
-    └── src/{main,test}/...
-```
+See [README.md](README.md#project-layout).
 
 ## Where configuration lives
 
@@ -113,25 +93,25 @@ three sources.
 
 ### `app/gradle.properties` — this module's identity
 
-| Property | Drives |
-|---|---|
-| `group` | Maven groupId |
-| `version` | Project version; **must end in `-SNAPSHOT`** for the release plugin |
-| `artifactId` | Archive base name, jar manifest, published artifactId |
-| `title` | `Specification-Title` manifest attribute, POM `<name>` |
-| `description` | POM `<description>` |
-| `mainClass` | Spring Boot entry point (`Start-Class`) |
+| Property      | Drives                                                              |
+|---------------|---------------------------------------------------------------------|
+| `group`       | Maven groupId                                                       |
+| `version`     | Project version; **must end in `-SNAPSHOT`** for the release plugin |
+| `artifactId`  | Archive base name, jar manifest, published artifactId               |
+| `title`       | `Specification-Title` manifest attribute, POM `<name>`              |
+| `description` | POM `<description>`                                                 |
+| `mainClass`   | Spring Boot entry point (`Start-Class`)                             |
 
 ### `gradle.properties` (root) — identity shared across projects
 
-| Property | Drives |
-|---|---|
-| `developerId`, `developerName`, `developerEmail` | Jar manifest, POM `<developers>` |
-| `license`, `licenseUrl` | POM `<licenses>` — currently `MIT License`; must match the root `LICENSE` file |
-| `mavenRepoPackages` | GitHub Packages URL, for both resolving and publishing |
-| `scmConnection`, `scmUrl` | POM `<scm>`, and the published POM `<url>` |
-| `sonar.*` | SonarCloud coordinates and quality-gate behaviour |
-| `org.gradle.*` | Daemon and logging behaviour |
+| Property                                         | Drives                                                                         |
+|--------------------------------------------------|--------------------------------------------------------------------------------|
+| `developerId`, `developerName`, `developerEmail` | Jar manifest, POM `<developers>`                                               |
+| `license`, `licenseUrl`                          | POM `<licenses>` — currently `MIT License`; must match the root `LICENSE` file |
+| `mavenRepoPackages`                              | GitHub Packages URL, for both resolving and publishing                         |
+| `scmConnection`, `scmUrl`                        | POM `<scm>`, and the published POM `<url>`                                     |
+| `sonar.*`                                        | SonarCloud coordinates and quality-gate behaviour                              |
+| `org.gradle.*`                                   | Daemon and logging behaviour                                                   |
 
 Read these with the `gradleProperty(name)` helper in `app/build.gradle.kts`,
 which fails with an actionable message when a property is missing.
@@ -144,12 +124,13 @@ which fails with an actionable message when a property is missing.
 ### The `libs` version catalog — dependency versions
 
 `libs` is **not** a local `gradle/libs.versions.toml`. It resolves from the
-published catalog `com.rubensgomes:gradle-catalog:0.2.7`, wired up in
+published catalog `com.rubensgomes:gradle-catalog:0.2.9`, wired up in
 `settings.gradle.kts`. It is the single source of truth for every plugin and
 library version, including Spring Boot (currently **4.1.1**).
 
 Dependency coordinates in `app/build.gradle.kts` omit versions deliberately —
-they come from the Spring Boot BOM, imported via `platform(libs.spring.boot.bom)`.
+they come from the Spring Boot BOM, imported via
+`platform(libs.spring.boot.bom)`.
 
 > **Note** — a `platform()` import applies only to the configuration it is
 > declared on and to configurations extending it. `annotationProcessor`,
@@ -165,22 +146,21 @@ make the *transitive* graph a moving target: the same source tree can resolve
 different transitive versions on different days. Dependency locking pins the
 fully resolved graph.
 
-Four lock files, with different scopes:
+Three lock files, with different scopes:
 
-| File | Locks | Configured in |
-|---|---|---|
-| `settings-gradle.lockfile` | the `libs` catalog resolution (`incomingCatalogForLibs0`) | nothing — Gradle locks version-catalog configurations automatically |
-| `buildscript-gradle.lockfile` (root) | the root script's plugin `classpath` — Spotless only | the "Buildscript Classpath Locking" section of the root `build.gradle.kts` |
-| `app/gradle.lockfile` | `annotationProcessor`, `compileClasspath`, `developmentOnly`, `runtimeClasspath`, `testAnnotationProcessor`, `testCompileClasspath`, `testRuntimeClasspath` | the "Dependency Locking" section of `app/build.gradle.kts` |
-| `app/buildscript-gradle.lockfile` | the `:app` plugin `classpath` — the libraries the Gradle plugins themselves pull in and run inside the build | the "Buildscript Classpath Locking" section of `app/build.gradle.kts` |
+| File                                 | Locks                                                                                                                                                       | Configured in                                                              |
+|--------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------|
+| `settings-gradle.lockfile`           | the `libs` catalog resolution (`incomingCatalogForLibs0`)                                                                                                   | nothing — Gradle locks version-catalog configurations automatically        |
+| `app/gradle.lockfile`                | `annotationProcessor`, `compileClasspath`, `developmentOnly`, `runtimeClasspath`, `testAnnotationProcessor`, `testCompileClasspath`, `testRuntimeClasspath` | the "Dependency Locking" section of `app/build.gradle.kts`                 |
+| `app/buildscript-gradle.lockfile`    | the `:app` plugin `classpath` — the libraries the Gradle plugins themselves pull in and run inside the build                                                | the "Buildscript Classpath Locking" section of `app/build.gradle.kts`      |
 
 The tooling's own *resolvable configurations* — `jacocoAgent`, `jacocoAnt` and
 friends — are deliberately left out of `app/gradle.lockfile`. None reaches the
 compiled output, and each would rewrite that file on every routine tooling bump.
 This is separate from the plugin **classpath**, which is locked in
 `app/buildscript-gradle.lockfile`: the JARs implementing Spotless, SonarQube and
-the release plugin execute inside the build, so their transitive closure is worth
-pinning even though the coverage tooling's runtime graph is not.
+the release plugin execute inside the build, so their transitive closure is
+worth pinning even though the coverage tooling's runtime graph is not.
 
 > **Note** — a lock file is a *forcing constraint*, not a checksum that
 > resolution is merely compared against. Where the lock and the Spring Boot BOM
@@ -188,17 +168,6 @@ pinning even though the coverage tooling's runtime graph is not.
 > match. Hand-editing a version in `app/gradle.lockfile` to another version
 > that exists will therefore silently change the build rather than fail it.
 > Never edit these files by hand; regenerate them.
-
-The plugin *versions* are already pinned by the catalog, so
-`app/buildscript-gradle.lockfile` adds the plugins' own transitive closure —
-code that runs inside the build but was previously unpinned.
-
-> **Note** — Spotless appears in the **root** `buildscript-gradle.lockfile`, not
-> in `app/buildscript-gradle.lockfile`, even though `app` uses it heavily. A
-> subproject inherits the root project's buildscript classpath, so once the root
-> script applies Spotless, `:app` stops resolving it independently and its lock
-> file legitimately no longer lists it. A Spotless version bump therefore means
-> regenerating the **root** lock file.
 
 > **Note** — `LockMode.STRICT` is set **twice** in `app/build.gradle.kts`, once
 > inside `buildscript { }` and once on the project. The two are independent: the
@@ -233,38 +202,33 @@ be produced with `--offline` from a warm Gradle cache.
 Regenerate whenever any of these change:
 
 - a dependency is added to or removed from `app/build.gradle.kts`
-- the `com.rubensgomes:gradle-catalog` version in `settings.gradle.kts` changes
-  — the Spring Boot BOM version flows from the catalog, so the entire
+- the `com.rubensgomes:gradle-catalog` version in `settings.gradle.kts`
+  changes — the Spring Boot BOM version flows from the catalog, so the entire
   transitive closure shifts even though nothing in `app/build.gradle.kts` was
   touched
 - a locked configuration is added to or removed from `lockedConfigurations`
+- the catalog moves a *plugin* version — every plugin, Spotless included, is on
+  the `:app` buildscript classpath, so `app/buildscript-gradle.lockfile` shifts
+  too
 
-The root `buildscript-gradle.lockfile` is **not** covered by that command, which
-is scoped to `:app`. It pins the root script's only plugin, Spotless, so it needs
-regenerating when the catalog moves the Spotless version:
-
-```bash
-./gradlew :dependencies --write-locks
-```
-
-All four lock files are committed to source control. Never pass `--write-locks` in
-an automated build: it would rewrite the lock state to match whatever resolved
-at that moment, which is precisely the unpredictability locking exists to
-prevent.
+All three lock files are committed to source control. Never pass `--write-locks`
+in an automated build: it would rewrite the lock state to match whatever
+resolved at that moment, which is precisely the unpredictability locking exists
+to prevent.
 
 ### Spring profiles — three YAML files
 
-| File | Profile | Activated by |
-|---|---|---|
-| `application.yml` | default | always |
-| `application-local.yml` | `local` | `tasks.bootRun` sets `spring.profiles.active` |
+| File                     | Profile  | Activated by                                   |
+|--------------------------|----------|------------------------------------------------|
+| `application.yml`        | default  | always                                         |
+| `application-local.yml`  | `local`  | `tasks.bootRun` sets `spring.profiles.active`  |
 | `application-docker.yml` | `docker` | `SPRING_PROFILES_ACTIVE`, baked into the image |
 
 The default profile pins `logging.level.root` to `error` so a deployed service
 stays quiet. That also discards Spring Boot's own startup messages — `Starting
-App`, `Tomcat started on port 8080`, `Started App in Xs` — leaving only the ASCII
-banner, which is written straight to `System.out` rather than through SLF4J. The
-result looks exactly like a hang.
+App`, `Tomcat started on port 8080`, `Started App in Xs` — leaving only the
+ASCII banner, which is written straight to `System.out` rather than through
+SLF4J. The result looks exactly like a hang.
 
 Both `local` and `docker` exist primarily to raise `root` back to `info`. If you
 add a profile of your own and it appears to start silently, this is why.
@@ -305,12 +269,49 @@ the packaged jar. Runtime configuration lives in
 `app/src/main/resources/application.yml`, with `application-local.yml` layered
 on top — `bootRun` activates the `local` profile automatically.
 
+### Stopping the application
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal running `bootRun`. That is
+the correct way: it shuts down gracefully, draining in-flight requests before
+the JVM exits. Two things about it look like failures and are not.
+
+**The shutdown logs do not appear, even though the shutdown ran.**
+<kbd>Ctrl</kbd>+<kbd>C</kbd> signals your terminal's foreground process group,
+which holds only the thin `gradlew` client. The application JVM is a child of
+the Gradle *daemon* and sits in a different process group entirely. The daemon
+does SIGTERM it once the client goes away, so the graceful path runs in full —
+but the client that was rendering the daemon's output has already exited, so
+every line logged from that point on is discarded.
+
+To watch the shutdown instead of trusting it, leave `bootRun` running and send
+SIGTERM from a second terminal. The Gradle client stays attached, so the logs
+render live in the `bootRun` terminal:
+
+```bash
+kill $(pgrep -f com.rubensgomes.blueprint.App)
+```
+
+The argument to `pgrep -f` is the fully qualified main class — the `mainClass`
+property in `app/gradle.properties` — which is what identifies this JVM among
+the several Java processes a Gradle build leaves running.
+`kill $(lsof -ti tcp:8080)` works too, and is the better choice if you have lost
+track of which application is holding the port.
+
+**Gradle then prints `BUILD FAILED`.** The forked application JVM was terminated
+by a signal, so it exits non-zero and Gradle reports the `bootRun` task as
+failed. The shutdown still ran cleanly.
+
+Under Docker, `docker compose down` (or `stop`) sends SIGTERM to the JVM running
+as PID 1, so the same graceful path applies. Compose allows
+`stop_grace_period: 15s` before resorting to SIGKILL — comfortably more than the
+5s `spring.lifecycle.timeout-per-shutdown-phase` needs.
+
 ### Error responses
 
 Every failed request returns JSON, not Spring Boot's Whitelabel HTML page.
-`GlobalErrorController` implements `ErrorController` and maps `/error`, which the
-servlet container forwards to after any `sendError`, so one handler covers 404s,
-validation 400s and unhandled 500s alike:
+`GlobalErrorController` implements `ErrorController` and maps `/error`, which
+the servlet container forwards to after any `sendError`, so one handler covers
+404s, validation 400s and unhandled 500s alike:
 
 ```bash
 curl http://localhost:8080/nope
@@ -326,7 +327,8 @@ The `/error` mapping enumerates its HTTP methods explicitly — `GET`, `HEAD`,
 
 > **Do not narrow that list to `GET`.** It looks like an obvious tightening and
 > it breaks error handling. The container forwards the *original* request method
-> when it dispatches to `/error`, so a request that failed as a POST arrives as a
+> when it dispatches to `/error`, so a request that failed as a POST arrives as
+> a
 > POST. With a GET-only mapping, every non-GET failure returns
 > `405 Method Not Allowed` instead of the status it actually caused — a client
 > POSTing to a mistyped URL would be told its method was wrong rather than that
@@ -418,10 +420,10 @@ Rule violated for bundle app: lines covered ratio is 0.84, but expected minimum 
 
 Reports land in:
 
-| Format | Location | Consumer |
-|---|---|---|
-| HTML | `app/build/jacocoHtml/index.html` | humans |
-| XML | `app/build/reports/jacoco/test/jacocoTestReport.xml` | SonarQube |
+| Format | Location                                             | Consumer  |
+|--------|------------------------------------------------------|-----------|
+| HTML   | `app/build/jacocoHtml/index.html`                    | humans    |
+| XML    | `app/build/reports/jacoco/test/jacocoTestReport.xml` | SonarQube |
 
 CSV output is disabled.
 
@@ -447,37 +449,37 @@ gate decorative.
 ./gradlew spotlessCheck      # verify only (runs as part of check)
 ```
 
-| Files | Formatter | Notes |
-|---|---|---|
-| `src/**/*.java` | Google Java Format | 2-space indent, 100 columns; also removes unused imports and sorts them |
-| `src/**/*.kt` | ktfmt | |
-| `src/**/*.json` | Jackson | |
-| `src/**/*.yaml`, `*.yml` | whitespace only | Jackson would delete every comment |
-| `*.gradle.kts` | ktlint | driven by the root `.editorconfig` |
+| Files                    | Formatter          | Notes                                                                   |
+|--------------------------|--------------------|-------------------------------------------------------------------------|
+| `src/**/*.java`          | Google Java Format | 2-space indent, 100 columns; also removes unused imports and sorts them |
+| `src/**/*.kt`            | ktfmt              |                                                                         |
+| `src/**/*.json`          | Jackson            |                                                                         |
+| `src/**/*.yaml`, `*.yml` | whitespace only    | Jackson would delete every comment                                      |
+| `*.gradle.kts`           | ktlint             | driven by the root `.editorconfig`                                      |
 
-Java and Kotlin sources also get a licence header injected — an
-`SPDX-License-Identifier: MIT` tag, the copyright line, and a pointer to
-`LICENSE` for the project's AI-content disclosures. The text is the
-`licenseHeaderText` constant in `app/build.gradle.kts`; edit it there, then run
-`./gradlew spotlessApply` to restamp every file.
+Java and Kotlin sources get a one-line `SPDX-License-Identifier: MIT` header
+injected. The text is the `licenseHeaderText` constant in
+`app/build.gradle.kts`; edit it there, then run `./gradlew spotlessApply` to
+restamp every file.
 
 > **Note** — `licenseHeader` is configured on the `java` and `kotlin` formats
 > only, which target `src/**`. The headers on `settings.gradle.kts` and
-> `app/build.gradle.kts` carry the same licence text but are **not** managed by
-> Spotless and will not be restamped; they have to be edited by hand.
+> `app/build.gradle.kts` are **not** managed by Spotless and must be edited by
+> hand.
 
 Two ktlint constraints apply to the header on `app/build.gradle.kts`, and both
 fail `spotlessKotlinGradleCheck` rather than being auto-fixed:
 
-- It must be **one** block comment. The licence text is merged into the same
-  comment as the script documentation, separated by a dashed rule, because
+- It must be **one** block comment. The licence line shares the same comment as
+  the script documentation, separated by a dashed rule, because
   `standard:no-consecutive-comments` rejects "a block comment ... preceded by a
   block comment".
 - It must be a plain block comment, never KDoc — see the note below.
 
-The same two constraints apply to `settings.gradle.kts`, for the same reason.
+The same two constraints apply to `settings.gradle.kts`, but nothing verifies
+them there. See below.
 
-### Why there are two Spotless configurations
+### `settings.gradle.kts` is not covered by Spotless
 
 A Spotless target is always resolved relative to the project that declares it,
 and Spotless rejects anything outside that directory outright:
@@ -486,17 +488,16 @@ and Spotless rejects anything outside that directory outright:
 Spotless error! All target files must be within the project dir.
 ```
 
-So `app`'s Spotless block can never reach the root scripts, however its target
-is written. The root scripts are covered by a **second, minimal
-`spotless` block in the root `build.gradle.kts`**, whose only job is linting
-`settings.gradle.kts` and the root script itself. Application configuration
-still lives entirely in `app/build.gradle.kts`.
+So `app`'s Spotless block can never reach `settings.gradle.kts`, however its
+target is written. Only a root project could, and there is no root
+`build.gradle.kts`.
 
-`:app:check` depends on the root `spotlessCheck`, so `bootJar`, `build`,
-`release`, and CI — which invokes `:app:check`, not the unqualified `check` —
-all inherit it. Before that wiring existed the root scripts were linted by
-nothing, which is how a stale Apache-2.0 licence header and a trailing-
-whitespace violation both survived there unnoticed.
+> **Warning** — `settings.gradle.kts` is therefore format-checked and
+> licence-header-checked by **nothing**. Its ktlint formatting, trailing
+> whitespace and MIT header are maintained by hand. `.editorconfig` still
+> guides the IDE, but no Gradle task enforces it. A stale Apache-2.0 header
+> and a trailing-whitespace violation have both survived there unnoticed
+> before, so review changes to that file deliberately.
 
 To have formatting verified before every push:
 
@@ -513,12 +514,12 @@ To have formatting verified before every push:
 
 `./gradlew assemble` produces four archives in `app/build/libs/`:
 
-| Archive | Contents |
-|---|---|
-| `spring-blueprint-<version>.jar` | executable Spring Boot jar (layered, for Docker caching) |
-| `spring-blueprint-<version>-plain.jar` | library jar, classes only |
-| `spring-blueprint-<version>-sources.jar` | sources |
-| `spring-blueprint-<version>-javadoc.jar` | Javadoc |
+| Archive                                  | Contents                                                 |
+|------------------------------------------|----------------------------------------------------------|
+| `spring-blueprint-<version>.jar`         | executable Spring Boot jar (layered, for Docker caching) |
+| `spring-blueprint-<version>-plain.jar`   | library jar, classes only                                |
+| `spring-blueprint-<version>-sources.jar` | sources                                                  |
+| `spring-blueprint-<version>-javadoc.jar` | Javadoc                                                  |
 
 The base name comes from the `artifactId` property, not the `app` directory
 name. Every jar carries full manifest metadata — `Specification-Title`,
@@ -563,65 +564,48 @@ Docker daemon.
 
 The two build paths stamp `org.opencontainers.image.version` differently:
 
-| Built with | Tags | `image.version` label |
-|---|---|---|
+| Built with              | Tags                                              | `image.version` label    |
+|-------------------------|---------------------------------------------------|--------------------------|
 | `./gradlew dockerBuild` | `<artifactId>:<version>` and `<artifactId>:local` | the real project version |
-| `docker compose build` | `<artifactId>:local` | `unknown` |
+| `docker compose build`  | `<artifactId>:local`                              | `unknown`                |
 
-That asymmetry is intentional. `APP_VERSION` used to be hardcoded in
-`docker-compose.yml`, which made it a second source of truth for the project
-version — and it went stale the first time the release plugin bumped the
-version. Compose now passes nothing and inherits the Dockerfile's `unknown`
-default, which is honest; `dockerBuild` reads the version from
-`app/gradle.properties`, so it cannot drift.
-
-Use `./gradlew dockerBuild` for anything you intend to publish or keep.
+Compose passes no `APP_VERSION`, so it cannot drift from
+`app/gradle.properties`. Use `./gradlew dockerBuild` for anything you publish.
 
 The shared catalog does expose `com.bmuschko.docker-remote-api`, but that plugin
-drives the Docker Engine REST API, which uses the **legacy builder**. This
-Dockerfile requires BuildKit for its `--mount=type=secret` credentials, and on
-the legacy builder those mounts do not exist — Gradle inside the container would
-fail on the version catalog with an HTTP 401. Hence the CLI shell-out.
+drives the Docker Engine REST API, which offers no ergonomic way to forward the
+two credentials the builder stage needs. Hence the CLI shell-out.
 
-`GITHUB_USER` and `GITHUB_TOKEN` must be exported first. They are the same
-credentials the Gradle build needs, passed through as **BuildKit secrets** —
-build-time only, never written into an image layer or `docker history`.
+`GITHUB_USER` and `GITHUB_TOKEN` must be exported first. They reach the image as
+**build args**, passed without values so Docker reads each from the environment
+and the token never lands in the process argv. They are consumed only by the
+`builder` stage, which is never tagged or pushed.
+
+> **Not secret mounts.** CI builds this image with `az acr build`, and ACR Tasks
+> runs the classic Docker builder, which rejects every `--mount`. The Gradle
+> cache mount went with them, so a local image rebuild re-resolves every
+> dependency — iterate with `./gradlew :app:bootJar` instead.
 
 ### The three stages
 
-| Stage | Base | Does |
-|---|---|---|
-| `builder` | `mcr.microsoft.com/openjdk/jdk:25-ubuntu` | Runs `./gradlew :app:bootJar` |
-| `extractor` | `eclipse-temurin:25-jre-alpine` | Explodes the layered jar |
-| `runtime` | `eclipse-temurin:25-jre-alpine` | Non-root JRE image |
+| Stage       | Base                                      | Does                          | Why that base                                                         |
+|-------------|-------------------------------------------|-------------------------------|-----------------------------------------------------------------------|
+| `builder`   | `mcr.microsoft.com/openjdk/jdk:25-ubuntu` | Runs `./gradlew :app:bootJar` | Reports `java.vendor` `Microsoft`, satisfying the toolchain pin        |
+| `extractor` | `eclipse-temurin:25-jre-alpine`           | Explodes the layered jar      | Any JRE 25                                                            |
+| `runtime`   | `eclipse-temurin:25-jre-alpine`           | Non-root JRE image            | busybox supplies `wget` for the `HEALTHCHECK` at no extra size        |
 
-**Why a Microsoft base for the builder.** The build pins
-`vendor = JvmVendorSpec.MICROSOFT` alongside `languageVersion = 25`. Gradle
-treats the JVM running Gradle as a toolchain candidate, and this base reports
-`java.vendor` `Microsoft`, so the spec is satisfied by the JVM already in the
-image and the foojay resolver never fires. A Temurin, Corretto or `gradle:*`
-builder would download a second ~200 MB JDK on every cold build. The Dockerfile
-also passes `-Porg.gradle.java.installations.auto-download=false`, so if the
-base image is ever changed to a non-Microsoft one the build fails in seconds
-with "No matching toolchain" rather than silently paying that download on every
-run.
+The builder base and the toolchain vendor are **one decision**: the build pins
+`vendor = JvmVendorSpec.MICROSOFT`, so any other base makes the foojay resolver
+download a second ~200 MB JDK on every cold build. The Dockerfile passes
+`-Porg.gradle.java.installations.auto-download=false` so that mistake fails in
+seconds with "No matching toolchain" instead. Changing `vendor` without changing
+`FROM` breaks `docker build` while host builds stay green.
 
-**The toolchain vendor and the builder base are one decision.** Changing
-`vendor` in `app/build.gradle.kts` without changing `FROM` in the Dockerfile
-breaks `docker build` while leaving host builds green, because the host has the
-foojay resolver available and the builder stage deliberately does not.
-
-**The builder needs no `findutils` install.** The Gradle wrapper hard-requires
-`xargs` and aborts with `xargs is not available` before doing anything else, and
-the jar-selection step uses `find`. The Ubuntu-based Microsoft image ships both
-already — unlike the Amazon Linux *minimal* images, which shipped neither and
-needed an explicit `dnf install`. Do not move to a slimmer base such as
-`25-distroless` without re-checking both tools.
-
-**Why alpine for the runtime.** busybox supplies `wget` for the `HEALTHCHECK` at
-no extra size; the Ubuntu-based Temurin JRE images ship neither `wget` nor
-`curl` and would need an `apt-get` layer. A JRE cannot run a single-file
-source-launch probe instead, because it has no compiler.
+**Do not move the builder to a slimmer base** such as `25-distroless` without
+checking for `xargs` and `find`: the Gradle wrapper aborts with `xargs is not
+available` before doing anything else, and the jar-selection step uses `find`.
+The Ubuntu-based Microsoft image ships both; the Amazon Linux *minimal* images
+shipped neither.
 
 **Layer extraction.** Spring Boot 4 **removed** the `layertools` jarmode. The
 jar bundles `spring-boot-jarmode-tools`, so extraction is:
@@ -681,18 +665,18 @@ credentials — belongs in `docker-compose.yml`, not in that file.
 
 ## Publishing
 
-| Command | Target | Credentials |
-|---|---|---|
-| `./gradlew publishToMavenLocal` | `~/.m2/repository` | none |
-| `./gradlew publish` | GitHub Packages | `GITHUB_USER` + `GITHUB_TOKEN` |
-| `./gradlew generatePomFileForMavenPublication` | `app/build/publications/maven/` | none |
+| Command                                        | Target                          | Credentials                    |
+|------------------------------------------------|---------------------------------|--------------------------------|
+| `./gradlew publishToMavenLocal`                | `~/.m2/repository`              | none                           |
+| `./gradlew publish`                            | GitHub Packages                 | `GITHUB_USER` + `GITHUB_TOKEN` |
+| `./gradlew generatePomFileForMavenPublication` | `app/build/publications/maven/` | none                           |
 
 The publication carries a complete POM — name, description, URL, licence,
 developer, and SCM — assembled from the two `gradle.properties` files, plus the
 sources and Javadoc jars.
 
-`publish` does **not** depend on `check`. Run `./gradlew build publish` to verify
-before uploading.
+`publish` does **not** depend on `check`. Run `./gradlew build publish` to
+verify before uploading.
 
 > **Note** — the Spring Boot plugin gives the `jar` task the `plain` classifier
 > so it does not collide with the executable jar. Every artifact in the `java`
@@ -724,19 +708,9 @@ snapshot, and pushes.
 - no SNAPSHOT dependencies
 
 `release.useAutomaticVersion=true` in the root `gradle.properties` suppresses
-the interactive version prompts. The plugin orchestrates its chain at execution
-time, so it does not show up in `taskTree`:
-
-```
-createScmAdapter → initScmAdapter → checkCommitNeeded → checkUpdateNeeded
-→ prepareVersions → checkoutMergeToReleaseBranch → unSnapshotVersion
-→ confirmReleaseVersion → checkSnapshotDependencies → runBuildTasks
-→ preTagCommit → createReleaseTag → checkoutMergeFromReleaseBranch
-→ updateVersion → commitNewVersion
-```
-
-`runBuildTasks` runs the full `build`, so a release executes tests and the
-coverage gate.
+the interactive version prompts. The plugin orchestrates ~15 tasks at execution
+time, so none of them appears in `taskTree`. One of them, `runBuildTasks`, runs
+the full `build`, so a release executes the tests and the coverage gate.
 
 > **Note** — this plugin is incompatible with the Gradle configuration cache,
 > which is why `org.gradle.configuration-cache=false` is set in the root
@@ -745,7 +719,8 @@ coverage gate.
 ### Releasing from CI
 
 `.github/workflows/release.yml` runs exactly that command on a runner. It is the
-preferred way to cut a release: the runner always starts from a clean checkout of
+preferred way to cut a release: the runner always starts from a clean checkout
+of
 `main`, which is the state the plugin's preconditions assume.
 
 ```bash
@@ -754,16 +729,16 @@ gh workflow run release.yml
 
 or the **Run workflow** button on the Actions tab.
 
-**`workflow_dispatch` only — there is no push or schedule trigger.** A release is
-a deliberate act, and unlike `build-verify.yml` this workflow *writes* to the
+**`workflow_dispatch` only — there is no push or schedule trigger.** A release
+is a deliberate act, and unlike `build-verify.yml` this workflow *writes* to the
 repository. That difference drives everything else about it:
 
-| Setting | Why |
-|---|---|
-| `permissions: contents: write` | It pushes two commits, a tag, and the `release` branch |
-| `ref: main`, `fetch-depth: 0` on checkout | `requireBranch` is `main`, and the plugin diffs local against remote — a shallow or detached checkout breaks the branch check and tag creation |
-| `token: ${{ secrets.RUBENS_PAT_TOKEN }}` on checkout | The token checkout persists is what the plugin's own `git push` uses. It must be a PAT — see below |
-| `concurrency`, `cancel-in-progress: false` | Two releases would race to tag from the same starting point, and interrupting a half-finished release leaves tags and commits inconsistent |
+| Setting                                              | Why                                                                                                                                            |
+|------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| `permissions: contents: write`                       | It pushes two commits, a tag, and the `release` branch                                                                                         |
+| `ref: main`, `fetch-depth: 0` on checkout            | `requireBranch` is `main`, and the plugin diffs local against remote — a shallow or detached checkout breaks the branch check and tag creation |
+| `token: ${{ secrets.RUBENS_PAT_TOKEN }}` on checkout | The token checkout persists is what the plugin's own `git push` uses. It must be a PAT — see below                                             |
+| `concurrency`, `cancel-in-progress: false`           | Two releases would race to tag from the same starting point, and interrupting a half-finished release leaves tags and commits inconsistent     |
 
 **It configures a git identity before releasing.** The plugin makes two commits,
 and a runner has no `user.name` or `user.email`, so a release would otherwise
@@ -796,13 +771,13 @@ The `sonarqube` task is a deprecated alias for `sonar`.
 
 All coordinates live in the root `gradle.properties`:
 
-| Property | Value |
-|---|---|
-| `sonar.host.url` | `https://sonarcloud.io` |
-| `sonar.organization` | `rubensgomes-org` |
-| `sonar.projectKey` | `rubensgomes-org_spring-blueprint` |
-| `sonar.projectName` | `spring-blueprint` |
-| `sonar.qualitygate.wait` | `true` |
+| Property                 | Value                              |
+|--------------------------|------------------------------------|
+| `sonar.host.url`         | `https://sonarcloud.io`            |
+| `sonar.organization`     | `rubensgomes-org`                  |
+| `sonar.projectKey`       | `rubensgomes-org_spring-blueprint` |
+| `sonar.projectName`      | `spring-blueprint`                 |
+| `sonar.qualitygate.wait` | `true`                             |
 
 `sonar.qualitygate.wait=true` makes `sonar` **block** after uploading, poll
 until SonarCloud finishes processing, and then fail the build when the quality
@@ -819,10 +794,10 @@ Cloning this project as a template means replacing `sonar.organization`,
 
 Two workflows, with opposite postures:
 
-| Workflow | Trigger | Writes to the repo? |
-|---|---|---|
-| `build-verify.yml` | every push to `main` | No — `permissions: contents: read` |
-| `release.yml` | manual (`workflow_dispatch`) | **Yes** — commits, a tag, the `release` branch |
+| Workflow           | Trigger                      | Writes to the repo?                            |
+|--------------------|------------------------------|------------------------------------------------|
+| `build-verify.yml` | every push to `main`         | No — `permissions: contents: read`             |
+| `release.yml`      | manual (`workflow_dispatch`) | **Yes** — commits, a tag, the `release` branch |
 
 `release.yml` is covered under [Releasing from CI](#releasing-from-ci). The rest
 of this section is about `build-verify.yml`.
@@ -830,8 +805,8 @@ of this section is about `build-verify.yml`.
 Both share the same three setup steps — checkout, `setup-java` with
 `distribution: microsoft`, `setup-gradle` — and the same `GRADLE_ARGS`, and both
 carry GitHub Packages credentials in `PACKAGES_USER` / `PACKAGES_TOKEN` because
-the `GITHUB_` prefix is reserved. Change one and consider whether the other needs
-the same change.
+the `GITHUB_` prefix is reserved. Change one and consider whether the other
+needs the same change.
 
 ### `build-verify.yml`
 
@@ -841,33 +816,27 @@ CI and a workstation execute identical Gradle.
 One job, `build-verify`, on `ubuntu-latest`. Three setup steps, then the four
 verification phases:
 
-| Step | Command | What it adds |
-|---|---|---|
+| Step      | Command                         | What it adds                                         |
+|-----------|---------------------------------|------------------------------------------------------|
 | `compile` | `:app:classes :app:testClasses` | `processResources`, `compileJava`, `compileTestJava` |
-| `test` | `:app:test` | `test`, `jacocoTestReport` |
-| `check` | `:app:check` | `spotless*Check`, `jacocoTestCoverageVerification` |
-| `sonar` | `:app:sonar` | `sonarResolver`, `sonar` |
+| `test`    | `:app:test`                     | `test`, `jacocoTestReport`                           |
+| `check`   | `:app:check`                    | `spotless*Check`, `jacocoTestCoverageVerification`   |
+| `sonar`   | `:app:sonar`                    | `sonarResolver`, `sonar`                             |
 
 ### Why four invocations instead of one
 
-`sonar` already depends on `check`, which depends on `test`, so `./gradlew
-:app:sonar` alone would run everything. Splitting it gives four independently
-red/green steps, so a failure names a phase instead of burying it in one 23-task
-log.
-
-It is not wasteful. All four steps share a workspace and a daemon, and
-up-to-date state persists in `app/.gradle`, not in daemon memory — each step
-finds the previous step's work `UP-TO-DATE` and adds only its own. In
-particular, `test` does **not** re-run during `check`, and Spotless runs once.
-The real cost is configuration time ×4, because the release plugin forces
-`org.gradle.configuration-cache=false`.
+`./gradlew :app:sonar` alone would run everything, but splitting it gives four
+independently red/green steps, so a failure names a phase instead of burying it
+in one 23-task log. Up-to-date state persists in `app/.gradle`, so each step
+finds the previous step's work `UP-TO-DATE` and nothing re-runs — the only cost
+is configuration time ×4, since the configuration cache is off.
 
 ### Required secrets
 
-| Secret | Used as | Notes |
-|---|---|---|
-| `RUBENS_PAT_TOKEN` | `GITHUB_TOKEN` | Classic PAT with `read:packages` |
-| `SONAR_TOKEN` | `SONAR_TOKEN` | Must be able to **read quality gate status**, not just submit |
+| Secret             | Used as        | Notes                                                         |
+|--------------------|----------------|---------------------------------------------------------------|
+| `RUBENS_PAT_TOKEN` | `GITHUB_TOKEN` | Classic PAT with `read:packages`                              |
+| `SONAR_TOKEN`      | `SONAR_TOKEN`  | Must be able to **read quality gate status**, not just submit |
 
 Both are organization-level secrets shared with this repository.
 
@@ -927,32 +896,11 @@ command verbose. Override per invocation:
 
 ## Troubleshooting
 
-**`Could not find <group>:<name>:` with no version**
-
-A versionless dependency was added to a configuration the Spring Boot BOM does
-not reach. Add `<configuration>(platform(libs.spring.boot.bom))` alongside it.
-See [Where configuration lives](#where-configuration-lives).
-
-**HTTP 401 resolving dependencies**
-
-`GITHUB_USER` / `GITHUB_TOKEN` are unset or the token lacks `read:packages`. The
-build warns about this at startup.
-
-**`The following files had format violations`**
-
-Run `./gradlew spotlessApply`.
-
-**`Rule violated for bundle app: lines covered ratio is ...`**
-
-Coverage fell below 90%. Open `app/build/jacocoHtml/index.html` to find the
-uncovered code.
-
-**`Required property '<name>' not found in gradle.properties`**
-
-A property the build needs was removed from `app/gradle.properties` or the root
-`gradle.properties`. See [Where configuration lives](#where-configuration-lives).
-
-**Release fails on a dirty working tree**
-
-`checkCommitNeeded` refuses to release with uncommitted or untracked files.
-Commit or stash first.
+| Message | Cause and fix |
+|---|---|
+| `Could not find <group>:<name>:` with no version | A versionless dependency on a configuration the Spring Boot BOM does not reach. Add `<configuration>(platform(libs.spring.boot.bom))` alongside it — see [Where configuration lives](#where-configuration-lives) |
+| HTTP 401 resolving dependencies | `GITHUB_USER` / `GITHUB_TOKEN` unset, or the token lacks `read:packages`. The build warns at startup |
+| `The following files had format violations` | Run `./gradlew spotlessApply` |
+| `Rule violated for bundle app: lines covered ratio is ...` | Coverage fell below 90%. Open `app/build/jacocoHtml/index.html` |
+| `Required property '<name>' not found in gradle.properties` | A needed property was removed from `app/gradle.properties` or the root `gradle.properties` — see [Where configuration lives](#where-configuration-lives) |
+| Release fails on a dirty working tree | `checkCommitNeeded` refuses to release with uncommitted or untracked files. Commit or stash first |
