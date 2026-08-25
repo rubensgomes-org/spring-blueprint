@@ -103,8 +103,6 @@ plugins {
     id("maven-publish")
     // net.researchgate.release: version bump + tag + branch merge release flow
     alias(libs.plugins.release)
-    // org.sonarqube: static analysis upload to SonarCloud
-    alias(libs.plugins.sonarqube)
     // com.diffplug.spotless: source formatting (Java, Kotlin, JSON, Gradle DSL)
     alias(libs.plugins.spotless)
     // org.springframework.boot: bootJar/bootRun and Spring Boot packaging
@@ -692,35 +690,48 @@ release {
 
 // ---------------------------------------------------------------------
 // --------------- >>> org.sonarqube Plugin <<< ------------------------
-// NOTE: This section is dedicated to configuring the sonarqube plugin.
+// NOTE: the plugin is NOT applied here -- there is no
+// alias(libs.plugins.sonarqube) in the plugins block above. It is applied
+// to the ROOT project instead, because the scanner pins
+// "sonar.projectBaseDir" to whichever project applies it: applying it
+// here made "app/" the entire analysed world and left ".github/workflows",
+// the root scripts, the Dockerfile and "docker-compose.yml" permanently
+// outside every scan. The "sonar" task therefore lives on the root
+// project and depends on ":app:check" from there. See the org.sonarqube
+// section of the root "build.gradle.kts".
+//
+// This project still participates, as a Sonar MODULE. The extension below
+// exists because applying the plugin at the root installs it on every
+// subproject, and it configures this module only.
+//
+// NOTE: "sonar.sources" is set explicitly rather than left to the source
+// sets. Two paths would otherwise be dropped:
+//
+//   - "build.gradle.kts". When the plugin was applied here, the scanner
+//     added this project's own build script to its sources -- which is how
+//     kotlin:S6629 ("Dependencies should be grouped by destination") came
+//     to be enforced on the dependencies block above. A module does not
+//     get that for free, so naming it keeps the rule in force.
+//   - "src/main/resources". Never analysed under the old layout either;
+//     it brings "application.yml" and the two profile files into scope.
+//
+// Paths are relative to this project's directory, which is this module's
+// "sonar.projectBaseDir".
 // ---------------------------------------------------------------------
 // https://docs.sonarsource.com/sonarqube-server/latest/analyzing-source-code/scanners/sonarscanner-for-gradle/
 
-// --------------- >>> constants <<< -----------------------------------
-// SonarQube coordinates read from the root "gradle.properties".
-// NOTE: the "as String" casts throw if a property is absent, so all three
-// must be defined for the build to configure at all.
-val sonarKey = project.findProperty("sonar.projectKey") as String
-val sonarName = project.findProperty("sonar.projectName") as String
-val sonarOrg = project.findProperty("sonar.organization") as String
-val sonarUrl = project.findProperty("sonar.host.url") as String
-
 sonar {
     properties {
-        // SONAR_TOKEN must be defined as an environment variable
-        property("sonar.projectKey", sonarKey)
-        property("sonar.projectName", sonarName)
-        property("sonar.organization", sonarOrg)
-        property("sonar.host.url", sonarUrl)
+        property(
+            "sonar.sources",
+            listOf(
+                "src/main/java",
+                "src/main/resources",
+                "build.gradle.kts",
+            ).joinToString(","),
+        )
     }
 }
-
-// Analysis runs after "check", which triggers "test"; because "test" is
-// finalizedBy jacocoTestReport, the XML coverage report exists by the time
-// the scanner runs, so an explicit dependency on jacocoTestReport is not
-// needed:
-// tasks.sonar { dependsOn("jacocoTestReport") }
-tasks.sonar { dependsOn("check") }
 
 // ---------------------------------------------------------------------
 // --------------- >>> org.springframework.boot Plugin <<< -------------
@@ -766,12 +777,10 @@ tasks.bootJar {
 // NOTE: this shells out to the "docker" CLI rather than using a Gradle
 // Docker plugin. The shared catalog does expose
 // alias(libs.plugins.docker.remote.api) (com.bmuschko.docker-remote-api),
-// but that plugin drives the Docker Engine REST API, which uses the
-// legacy builder. The Dockerfile here REQUIRES BuildKit -- the "# syntax"
-// directive, "--mount=type=secret" for the GitHub Packages credentials
-// and "--mount=type=cache" for the Gradle home. On the legacy builder the
-// secret mounts simply do not exist, so Gradle inside the container would
-// fail to resolve the version catalog with an HTTP 401.
+// but that plugin drives the Docker Engine REST API, which offers no
+// ergonomic way to forward the two GitHub Packages credentials the
+// builder stage needs, and the CLI is what every other consumer of this
+// Dockerfile already uses.
 //
 // NOTE: deliberately NOT wired to "bootJar" or "build". The Dockerfile
 // compiles the application inside its own builder stage, so depending on
@@ -782,7 +791,7 @@ tasks.bootJar {
 // is not part of the normal verification loop, and wiring it in would
 // make every "./gradlew build" require a running Docker daemon.
 // ---------------------------------------------------------------------
-// https://docs.docker.com/build/building/secrets/
+// https://docs.docker.com/build/building/variables/#build-arguments
 
 // Both tags come from the same properties the jar and the POM use, so the
 // image coordinate is never a second source of truth.
@@ -796,18 +805,25 @@ tasks.register<Exec>("dockerBuild") {
     // The build context is the repository root, not this subproject.
     workingDir = rootDir
 
-    // Docker 23+ defaults to BuildKit, but an older client or a
-    // DOCKER_BUILDKIT=0 in the environment would silently fall back to the
-    // legacy builder and drop the secret mounts, so pin it.
+    // The Dockerfile no longer needs BuildKit -- it must stay buildable by
+    // ACR Tasks, which runs the classic builder -- but BuildKit is still
+    // wanted locally for its parallel stages and better caching, and an
+    // older client or a DOCKER_BUILDKIT=0 in the environment would silently
+    // fall back. Pin it.
     environment("DOCKER_BUILDKIT", "1")
 
+    // GITHUB_USER and GITHUB_TOKEN are passed WITHOUT a value on purpose.
+    // Docker then reads each from this task's environment, so the token
+    // never appears in the docker process argv where "ps" could read it.
+    // Giving them values here would be the one place in the whole pipeline
+    // that leaks the credential to other local users.
     commandLine(
         "docker",
         "build",
-        "--secret",
-        "id=github_user,env=GITHUB_USER",
-        "--secret",
-        "id=github_token,env=GITHUB_TOKEN",
+        "--build-arg",
+        "GITHUB_USER",
+        "--build-arg",
+        "GITHUB_TOKEN",
         "--build-arg",
         "APP_VERSION=$version",
         "--tag",
@@ -827,11 +843,11 @@ tasks.register<Exec>("dockerBuild") {
         if (missing.isNotEmpty()) {
             throw GradleException(
                 "${missing.joinToString(" and ")} must be exported before running " +
-                    "dockerBuild. The image build resolves the shared " +
-                    "'com.rubensgomes:gradle-catalog' version catalog from GitHub " +
-                    "Packages inside its builder stage, which always starts from a " +
-                    "cold Gradle cache and therefore cannot fall back to local " +
-                    "artifacts.",
+                    "dockerBuild. They are forwarded to the image as build args, " +
+                    "which resolve their values from this environment. The builder " +
+                    "stage resolves the shared 'com.rubensgomes:gradle-catalog' " +
+                    "version catalog from GitHub Packages, always from a cold Gradle " +
+                    "cache, and therefore cannot fall back to local artifacts.",
             )
         }
     }

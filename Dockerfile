@@ -6,14 +6,18 @@
 #   extractor -- explodes the layered jar into its four cache layers
 #   runtime   -- minimal JRE image running as a non-root user
 #
-# Build (BuildKit required for the secret mounts):
+# Build (GITHUB_USER and GITHUB_TOKEN must be exported first -- the
+# valueless "--build-arg" form makes Docker read them from the environment
+# rather than the command line):
 #
 #   docker build \
-#     --secret id=github_user,env=GITHUB_USER \
-#     --secret id=github_token,env=GITHUB_TOKEN \
+#     --build-arg GITHUB_USER \
+#     --build-arg GITHUB_TOKEN \
 #     -t spring-blueprint:local .
 #
-# Or simply "docker compose build", which wires the same secrets.
+# Or "docker compose build", or "./gradlew :app:dockerBuild", both of which
+# wire the same two args. In CI the image is built server-side by
+# "az acr build" -- see .github/workflows/build-deploy-image.yml.
 #
 # https://docs.spring.io/spring-boot/reference/packaging/container-images/dockerfiles.html
 
@@ -45,14 +49,32 @@ WORKDIR /build
 # BuildKit layer level, which -- unlike a cache mount -- survives
 # --cache-from in CI.
 #
-# All three lock files are mandatory: dependency locking runs in
+# All four lock files are mandatory: dependency locking runs in
 # LockMode.STRICT for both the project and the buildscript classpath, so
 # a missing lock file fails the build rather than resolving freely.
+#
+# The ROOT "build.gradle.kts" and its lock file are equally mandatory,
+# for a reason that is easy to miss. It applies spotless and sonarqube,
+# which puts both on the root buildscript classpath, and ":app" INHERITS
+# its parent's buildscript classpath. Drop the root script and ":app" has
+# to resolve spotless into its own "classpath" configuration instead,
+# where LockMode.STRICT rejects every artifact as "not part of the
+# dependency lock state" -- they are locked in the ROOT lock file, not in
+# "app/buildscript-gradle.lockfile". ":app:check" also wires in
+# rootProject.tasks.named("spotlessCheck"), which cannot resolve at all
+# without the root script.
+#
+# NOTE: the sonar scanner is resolved here even though this stage never
+# runs "sonar" -- applying a plugin resolves its classpath at
+# configuration time. It costs a one-off download in a cold-cache image
+# build and nothing thereafter.
 COPY gradlew                        ./
 COPY gradle/                        ./gradle/
 COPY settings.gradle.kts            ./
+COPY build.gradle.kts               ./
 COPY gradle.properties              ./
 COPY settings-gradle.lockfile       ./
+COPY buildscript-gradle.lockfile    ./
 COPY .editorconfig                  ./
 COPY app/build.gradle.kts           ./app/
 COPY app/gradle.properties          ./app/
@@ -73,29 +95,57 @@ COPY app/src/ ./app/src/
 # reachable only through check.
 ARG GRADLE_BUILD_ARGS=""
 
-# The credentials are a command prefix, not ENV instructions, so they
-# exist only in this one process. They never enter a layer or
-# "docker history". Command substitution also strips the trailing newline
-# that most secret managers append.
-#
 # GITHUB_USER/GITHUB_TOKEN are mandatory, not optional: settings.gradle.kts
 # resolves the "com.rubensgomes:gradle-catalog" version catalog from GitHub
-# Packages, and every plugin alias comes through that catalog, so a cold
-# Docker cache resolves nothing without them. Missing credentials produce
-# only a warning, then a confusing HTTP 401.
+# Packages while EVALUATING SETTINGS, and every plugin alias comes through
+# that catalog, so a cold Docker cache resolves nothing without them.
+# Missing credentials produce only a warning, then a confusing HTTP 401 --
+# hence the explicit guard below.
 #
-# sharing=locked on the cache mount is required: GRADLE_USER_HOME holds
-# the modules-2 file locks and the build cache, so concurrent unlocked
-# builds would corrupt it.
+# WHY BUILD ARGS RATHER THAN "--mount=type=secret"
+#   This stage used to take both values as BuildKit secret mounts. It
+#   cannot any more: ".github/workflows/build-deploy-image.yml" builds this
+#   image with "az acr build", and ACR Tasks runs the CLASSIC Docker
+#   builder. "az acr build" has no "--secret" flag and no way to set
+#   DOCKER_BUILDKIT=1 (that is only settable via "env:" on a build step
+#   inside an "az acr run" task YAML), so every "--mount" here failed with
+#   "the --mount option requires BuildKit".
+#
+#   A build arg is weaker than a secret mount -- the value lands in this
+#   stage's layer metadata rather than existing only for the life of one
+#   process. It is acceptable here for two reasons:
+#
+#     1. This is a multi-stage build and "builder" is never tagged or
+#        pushed. Only the "runtime" stage below is, and nothing carries
+#        these values forward into it. Do NOT promote them to ENV, and do
+#        NOT reference them in the extractor or runtime stages.
+#     2. "az acr build --secret-build-arg" keeps the values out of the ACR
+#        run logs, unlike plain "--build-arg", whose values that command's
+#        own help warns are surfaced for debugging.
+#
+#   Callers pass them without a value ("--build-arg GITHUB_USER"), so
+#   Docker reads each one from the ambient environment and the token never
+#   appears in the process argv where "ps" could see it. See the
+#   "dockerBuild" task in app/build.gradle.kts and the "args:" block in
+#   docker-compose.yml.
+#
+# ACCEPTED COST: the "--mount=type=cache" on /root/.gradle went with them,
+# for the same BuildKit reason. ACR agents always start from a cold cache
+# so nothing is lost there, but a LOCAL image rebuild now re-resolves
+# every dependency. Iterate with "./gradlew :app:bootJar" on the host
+# rather than by rebuilding the image.
 #
 # auto-download=false makes a toolchain mismatch fail in seconds with
 # "No matching toolchain" instead of silently pulling a second JDK, should
 # anyone later change the base image above.
-RUN --mount=type=secret,id=github_user \
-    --mount=type=secret,id=github_token \
-    --mount=type=cache,target=/root/.gradle,sharing=locked \
-    GITHUB_USER="$(cat /run/secrets/github_user)" \
-    GITHUB_TOKEN="$(cat /run/secrets/github_token)" \
+ARG GITHUB_USER
+ARG GITHUB_TOKEN
+RUN set -eu; \
+    if [ -z "${GITHUB_USER:-}" ] || [ -z "${GITHUB_TOKEN:-}" ]; then \
+      echo "GITHUB_USER and GITHUB_TOKEN build args are required." >&2; \
+      echo "This stage resolves com.rubensgomes:gradle-catalog from GitHub Packages." >&2; \
+      exit 1; \
+    fi; \
     ./gradlew --no-daemon --console=plain \
       -Porg.gradle.java.installations.auto-download=false \
       :app:bootJar ${GRADLE_BUILD_ARGS}

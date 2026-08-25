@@ -1,15 +1,21 @@
 # Files excluded from the Docker build context.
 #
 # The Dockerfile uses explicit COPY paths rather than "COPY . .", so this file
-# governs what BuildKit transfers and hashes on every build rather than what
+# governs what the builder transfers and hashes on every build rather than what
 # lands in the image. Keeping it tight still matters: the context is synced on
-# each build, and "app/build" alone is ~50 MB of jars.
+# each build -- and UPLOADED to Azure by "az acr build" -- while "app/build"
+# alone is ~50 MB of jars.
 #
 # NOTE: do NOT add any of these -- the build breaks without them:
 #   gradlew, gradle/wrapper/gradle-wrapper.jar, settings.gradle.kts,
-#   gradle.properties, app/gradle.properties, app/build.gradle.kts,
-#   .editorconfig (spotless reads it), all three *.lockfile files, and
-#   app/src/test (bootJar depends on check, which runs the suite).
+#   build.gradle.kts, gradle.properties, app/gradle.properties,
+#   app/build.gradle.kts, .editorconfig (spotless reads it), all four
+#   *.lockfile files, and app/src/test (bootJar depends on check, which
+#   runs the suite).
+#
+#   The ROOT build.gradle.kts and buildscript-gradle.lockfile are easy to
+#   overlook: ":app" inherits the root buildscript classpath, so without
+#   them ":app" resolves spotless itself and LockMode.STRICT rejects it.
 
 # ---------- Gradle output and caches ----------
 # Rebuilt inside the image; machine-specific and large.
@@ -46,7 +52,7 @@ commands/
 .github/
 
 # ---------- Local credentials ----------
-# GitHub Packages auth is supplied via BuildKit secrets, never the context.
+# GitHub Packages auth is supplied as build args, never through the context.
 .env
 *.env
 .secrets/
@@ -58,3 +64,8 @@ commands/
 Dockerfile
 .dockerignore
 docker-compose*.yml
+
+# ---------- CI tooling ----------
+# An ACR Tasks task definition, not an input to the image build. The deploy
+# workflow reads it from $RUNNER_TEMP, not from the context.
+acr-smoke-test.yaml

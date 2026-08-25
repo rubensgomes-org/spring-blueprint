@@ -79,7 +79,23 @@ curl http://localhost:8080/actuator/health
 
 **Gradle** — press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal running
 `bootRun`. That is the correct way; it shuts down gracefully, draining in-flight
-requests before the JVM exits:
+requests before the JVM exits.
+
+> **The shutdown logs will not appear, even though the shutdown ran.**
+> <kbd>Ctrl</kbd>+<kbd>C</kbd> signals your terminal's foreground process group,
+> which holds only the thin `gradlew` client. The application JVM is a child of
+> the Gradle *daemon* and sits in a different process group entirely. The
+> daemon does SIGTERM it once the client goes away, so the graceful path runs
+> in full — but the client that was rendering the daemon's output has already
+> exited, so every line logged from that point on is discarded.
+
+To watch the shutdown instead of just trusting it, leave `bootRun` running and
+send SIGTERM from a second terminal. The Gradle client stays attached, so the
+logs render live in the `bootRun` terminal:
+
+```bash
+kill $(pgrep -f com.rubensgomes.blueprint.App)
+```
 
 ```
 INFO ... AppShutdownEventListener  : Handling SIGTERM
@@ -88,17 +104,15 @@ INFO ... GracefulShutdown          : Graceful shutdown complete
 INFO ... HelloWorldService         : I am being terminated.
 ```
 
+The argument to `pgrep -f` is the fully qualified main class — the `mainClass`
+property in `app/gradle.properties` — which is what identifies this JVM among
+the several Java processes a Gradle build leaves running.
+`kill $(lsof -ti tcp:8080)` works too, and is the better choice if you have
+lost track of which application is holding the port.
+
 > **Gradle then prints `BUILD FAILED`. That is expected, not an error.** The
 > forked application JVM was terminated by a signal, so it exits non-zero and
-> Gradle reports the `bootRun` task as failed. The shutdown above still ran
-> cleanly.
-
-If you lost the terminal, signal the process directly — SIGTERM triggers the
-same graceful path:
-
-```bash
-kill $(lsof -ti tcp:8080)
-```
+> Gradle reports the `bootRun` task as failed. The shutdown still ran cleanly.
 
 > **`./gradlew --stop` does not stop the application.** It stops the Gradle
 > *daemon*, which is a different process; the app keeps running.
@@ -247,6 +261,7 @@ side:
 | `./gradlew release`                         | Tag, merge to `release`, bump (prefer the workflow)  |
 | `./gradlew :app:dependencies --write-locks` | Regenerate the `:app` dependency lock files          |
 | `gh workflow run release.yml`               | Cut a release from CI (manual trigger)               |
+| `gh workflow run build-deploy-image.yml`    | Build the released image and push it to Azure ACR    |
 | `./gradlew dockerBuild`                     | Build the image (tags version + `local`)             |
 | `docker compose up --build -d`              | Build and run the container image                    |
 | `docker compose down`                       | Stop and remove the container                        |
@@ -268,9 +283,11 @@ spring-blueprint/
 ├── gradle.properties          # developer identity, license, SCM, Sonar, daemon
 ├── BUILD.md                   # build documentation
 ├── llms.txt                   # machine-readable project index
+├── acr-smoke-test.yaml        # ACR Tasks task: boot the image, probe /actuator/health
 ├── .github/workflows/
 │   ├── build-verify.yml       # CI: compile, test, check, sonar on push to main
-│   └── release.yml            # manual: ./gradlew release
+│   ├── release.yml            # manual: ./gradlew release
+│   └── build-deploy-image.yml # manual: provision ACR, az acr build, az acr run
 └── app/
     ├── build.gradle.kts       # the entire build
     ├── gradle.lockfile        # lock state: application dependencies
@@ -320,7 +337,10 @@ The laboratory half of this project. Nothing here is committed to a date:
 - [x] CI verification (GitHub Actions: compile, test, check, sonar on push to
   `main`)
 - [x] Release from CI (GitHub Actions: manual `release.yml`)
-- [ ] CD workflows — publish and deploy from CI
+- [x] CD workflow — build the released image and push it to Azure Container
+  Registry (`build-deploy-image.yml`), gated on a cross-repo Terraform job that
+  provisions the registry first. See [Deploying the image to
+  ACR](BUILD.md#deploying-the-image-to-acr).
 - [x] Containerisation — multi-stage `Dockerfile` + `docker-compose.yml`
 - [ ] Cloud deployment targets
 - [ ] Persistence layer with a real domain model

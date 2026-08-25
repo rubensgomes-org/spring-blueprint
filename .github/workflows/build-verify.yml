@@ -14,9 +14,9 @@
 # CI and a workstation execute byte-identical Gradle.
 #
 # WHY FOUR SEPARATE ./gradlew INVOCATIONS
-#   The task graph already chains these: "sonar" dependsOn "check", "check"
-#   dependsOn jacocoTestCoverageVerification -> jacocoTestReport -> "test". So
-#   "./gradlew :app:sonar" alone would run all of it in one shot.
+#   The task graph already chains these: "sonar" dependsOn ":app:check",
+#   "check" dependsOn jacocoTestCoverageVerification -> jacocoTestReport ->
+#   "test". So "./gradlew sonar" alone would run all of it in one shot.
 #
 #   Splitting it buys four independently red/green steps, so a failure points
 #   at a phase instead of at one 23-task wall of output. It is not wasteful:
@@ -28,6 +28,12 @@
 #     test    -> test, jacocoTestReport (a finalizer of "test")
 #     check   -> spotless*Check, jacocoTestCoverageVerification
 #     sonar   -> sonarResolver, sonar
+#
+#   NOTE: "sonar" is unqualified -- it is a ROOT project task. The
+#   org.sonarqube plugin is applied to the root project so that
+#   "sonar.projectBaseDir" is the repository root and ".github/workflows",
+#   the root Gradle scripts, the Dockerfile and "docker-compose.yml" are
+#   analysed alongside ":app". ":app" participates as a Sonar module.
 #
 #   The real cost is configuration time x4, because the release plugin forces
 #   "org.gradle.configuration-cache=false". Budget a few seconds per step.
@@ -250,13 +256,13 @@ jobs:
         run: |
           echo "=============================================================="
           echo " STEP: sonar"
-          echo " ./gradlew :app:sonar"
+          echo " ./gradlew sonar"
           echo "=============================================================="
           export GITHUB_USER="$PACKAGES_USER"
           export GITHUB_TOKEN="$PACKAGES_TOKEN"
-          ./gradlew $GRADLE_ARGS :app:sonar
-          # "sonar" dependsOn "check", which is now UP-TO-DATE, so this step
-          # only resolves the scanner and uploads the analysis. Because
+          ./gradlew $GRADLE_ARGS sonar
+          # "sonar" dependsOn ":app:check", which is now UP-TO-DATE, so this
+          # step only resolves the scanner and uploads the analysis. Because
           # gradle.properties sets sonar.qualitygate.wait=true, it then BLOCKS
           # until SonarCloud computes the quality gate and FAILS the job if the
           # gate fails. That is intentional, and it is why sonar runs last.

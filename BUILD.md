@@ -97,6 +97,7 @@ spring-blueprint/
 ├── .editorconfig              # ktlint rules for *.gradle.kts
 ├── .github/workflows/
 │   ├── build-verify.yml       # CI: compile, test, check, sonar on push to main
+│   │                          #     (also analysed by sonar itself)
 │   └── release.yml            # manual: ./gradlew release
 └── app/
     ├── build.gradle.kts       # the entire build
@@ -377,8 +378,11 @@ Five pieces of wiring are worth knowing, because they are not Gradle defaults:
    written even when tests fail. Finalizers do not appear in dependency trees.
 3. **`jacocoTestCoverageVerification` is wired into `check`.** This is what
    makes the coverage threshold binding rather than advisory.
-4. **`sonar` depends on `check`**, so analysis never runs against unverified
-   code and the XML coverage report is guaranteed to exist by then.
+4. **`sonar` depends on `:app:check`**, so analysis never runs against
+   unverified code and the XML coverage report is guaranteed to exist by then.
+   `sonar` is a root project task; the dependency is spelled `:app:check`
+   because the root project applies neither `java` nor `base` and so has no
+   `check` task of its own.
 5. **`spotlessCheck` verifies but never rewrites.** Formatting is not applied
    automatically during compilation; see [Code formatting](#code-formatting).
 
@@ -578,14 +582,33 @@ default, which is honest; `dockerBuild` reads the version from
 Use `./gradlew dockerBuild` for anything you intend to publish or keep.
 
 The shared catalog does expose `com.bmuschko.docker-remote-api`, but that plugin
-drives the Docker Engine REST API, which uses the **legacy builder**. This
-Dockerfile requires BuildKit for its `--mount=type=secret` credentials, and on
-the legacy builder those mounts do not exist — Gradle inside the container would
-fail on the version catalog with an HTTP 401. Hence the CLI shell-out.
+drives the Docker Engine REST API, which offers no ergonomic way to forward the
+two GitHub Packages credentials the builder stage needs. Hence the CLI
+shell-out, which is also what every other consumer of this Dockerfile uses.
 
 `GITHUB_USER` and `GITHUB_TOKEN` must be exported first. They are the same
-credentials the Gradle build needs, passed through as **BuildKit secrets** —
-build-time only, never written into an image layer or `docker history`.
+credentials the Gradle build needs, forwarded as **build args**.
+
+> **These were BuildKit secret mounts until CI moved to `az acr build`.** ACR
+> Tasks runs the *classic* Docker builder: `az acr build` has no `--secret`
+> flag and no way to set `DOCKER_BUILDKIT=1`, so `RUN --mount=type=secret,…`
+> failed there outright. The Dockerfile now takes both values as `ARG`s.
+>
+> A build arg is weaker than a secret mount — the value lands in the stage's
+> layer metadata rather than living only for the life of one process. It is
+> acceptable here because this is a multi-stage build and `builder` is never
+> tagged or pushed; only `runtime` is, and nothing carries the values forward
+> into it. Do **not** promote them to `ENV`, and do not reference them in the
+> `extractor` or `runtime` stages.
+>
+> Every caller passes them **without a value** — `--build-arg GITHUB_USER` —
+> so Docker resolves each from the ambient environment and the token never
+> appears in the process argv where `ps` could read it.
+>
+> The `--mount=type=cache` on `/root/.gradle` went with them, for the same
+> reason. ACR agents always start cold so nothing is lost there, but a *local*
+> image rebuild now re-resolves every dependency. Iterate with
+> `./gradlew :app:bootJar` on the host rather than by rebuilding the image.
 
 ### The three stages
 
@@ -791,8 +814,36 @@ export SONAR_TOKEN=<token>
 ./gradlew sonar
 ```
 
-Depends on `check`, so tests and the coverage report always precede analysis.
-The `sonarqube` task is a deprecated alias for `sonar`.
+`sonar` is a **root project** task and depends on `:app:check`, so tests and
+the coverage report always precede analysis. The `sonarqube` task is a
+deprecated alias for `sonar`.
+
+### What gets analysed
+
+The `org.sonarqube` plugin is applied to the **root** project, not to `:app`.
+The scanner pins `sonar.projectBaseDir` to whichever project applies it, so
+applying it to `:app` made `app/` the entire analysed world. At the root, the
+base directory is the repository root and the analysis covers two modules:
+
+| Module | Base dir | Sources |
+|---|---|---|
+| root | repository root | `.github/workflows`, `build.gradle.kts`, `settings.gradle.kts`, `Dockerfile`, `docker-compose.yml` |
+| `:app` | `app/` | `src/main/java`, `src/main/resources`, `build.gradle.kts` (tests: `src/test/java`) |
+
+No path belongs to both modules — listing one twice indexes it twice.
+
+`:app` sets `sonar.sources` explicitly rather than letting the source sets
+supply it. A module does not automatically contribute its own build script the
+way the plugin-owning project does, and `src/main/resources` was never in scope
+under the old layout; naming both keeps `app/build.gradle.kts` under
+`kotlin:S6629` and brings `application.yml` into the analysis.
+
+Verify the real scope at any time without uploading anything:
+
+```bash
+./gradlew sonar -Dsonar.scanner.internal.dumpToFile=/tmp/props.txt -x :app:check
+grep -E 'sources=|projectBaseDir=|modules=' /tmp/props.txt
+```
 
 All coordinates live in the root `gradle.properties`:
 
@@ -817,15 +868,18 @@ Cloning this project as a template means replacing `sonar.organization`,
 
 ## Continuous integration
 
-Two workflows, with opposite postures:
+Three workflows, with different postures:
 
 | Workflow | Trigger | Writes to the repo? |
 |---|---|---|
 | `build-verify.yml` | every push to `main` | No — `permissions: contents: read` |
 | `release.yml` | manual (`workflow_dispatch`) | **Yes** — commits, a tag, the `release` branch |
+| `build-deploy-image.yml` | manual (`workflow_dispatch`) | No — but **writes to Azure** |
 
-`release.yml` is covered under [Releasing from CI](#releasing-from-ci). The rest
-of this section is about `build-verify.yml`.
+`release.yml` is covered under [Releasing from CI](#releasing-from-ci), and
+`build-deploy-image.yml` under [Deploying the image to
+ACR](#deploying-the-image-to-acr). The rest of this section is about
+`build-verify.yml`.
 
 Both share the same three setup steps — checkout, `setup-java` with
 `distribution: microsoft`, `setup-gradle` — and the same `GRADLE_ARGS`, and both
@@ -846,12 +900,12 @@ verification phases:
 | `compile` | `:app:classes :app:testClasses` | `processResources`, `compileJava`, `compileTestJava` |
 | `test` | `:app:test` | `test`, `jacocoTestReport` |
 | `check` | `:app:check` | `spotless*Check`, `jacocoTestCoverageVerification` |
-| `sonar` | `:app:sonar` | `sonarResolver`, `sonar` |
+| `sonar` | `sonar` | `sonarResolver`, `sonar` |
 
 ### Why four invocations instead of one
 
-`sonar` already depends on `check`, which depends on `test`, so `./gradlew
-:app:sonar` alone would run everything. Splitting it gives four independently
+`sonar` already depends on `:app:check`, which depends on `test`, so
+`./gradlew sonar` alone would run everything. Splitting it gives four independently
 red/green steps, so a failure names a phase instead of burying it in one 23-task
 log.
 
@@ -904,6 +958,171 @@ in step: the toolchain block, the Dockerfile `FROM`, and `distribution:` here.
 - **The release plugin re-triggers CI.** It pushes two commits per release to
   `main`, each costing a run and a SonarCloud analysis. The workflow's closing
   comment carries the `if:` guard to suppress them if that ever matters.
+
+## Deploying the image to ACR
+
+`.github/workflows/build-deploy-image.yml` builds the released image and pushes
+it to Azure Container Registry. **Manual only** (`workflow_dispatch`), and for a
+stronger reason than `release.yml` has: its first job runs `terraform apply` —
+in another repository, under `-auto-approve` — against the Azure subscription.
+
+```bash
+gh workflow run build-deploy-image.yml                  # latest tag
+gh workflow run build-deploy-image.yml -f version=0.0.6 # a specific release
+```
+
+### Two repositories, one run graph
+
+| Job | Runs | Produces |
+|---|---|---|
+| `infra` | `rubensgomes-org/azure-iac`'s `provision-acr.yml`, called as a cross-repo reusable workflow | `acr_name`, `acr_login_server` |
+| `build` | `az acr build`, then `az acr run` | `<acr>.azurecr.io/spring-blueprint:<version>` |
+
+The provisioning stays authored and versioned in `azure-iac`; this repository
+only *calls* it. Because a `workflow_call` job is a real job in **this** run
+graph, there is one run, one log view and ordinary `needs:` ordering — no
+dispatch-then-poll plumbing. `infra` brings three Terraform modules to their
+desired state in dependency order: `01-resource-groups`, `04-managed-identities`,
+then `06-acr`.
+
+The registry name is consumed from `needs.infra.outputs.acr_name`, never written
+as a literal. If the ACR is renamed in `azure-iac`'s `terraform.tfvars`, this
+workflow follows automatically instead of failing on a stale hostname.
+
+The `uses:` ref is **pinned to a tag** (`@v0.1.1`), not `@main`. A floating ref
+would let an unrelated commit in the IaC repository change what this deploy does,
+with no diff here to review.
+
+### Credentials: organization secrets
+
+| Secret | Scope | Used by |
+|---|---|---|
+| `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID` | **Organization**, shared with `azure-iac` and `spring-blueprint` | `infra` (as `ARM_*`) and the `az login` step |
+| `RUBENS_PAT_TOKEN` | Repository | Rides in `PACKAGES_TOKEN`, reaches the image build as `--secret-build-arg GITHUB_TOKEN` |
+
+The four `AZURE_*` values are named **explicitly** under `secrets:` at the call
+site rather than passed with `secrets: inherit`. `inherit` is all-or-nothing and
+hides which credentials cross a repository boundary; this service principal has
+subscription-wide write access, so the call site documents exactly what it hands
+over. The cost is that adding a fifth secret in `azure-iac` means editing this
+block too.
+
+Precedence, most specific wins: **environment secret > repo secret > org
+secret**. A same-named repo secret silently shadows the org one.
+
+Sign-in is a plain `az login --service-principal`, not `azure/login@v2`: the org
+secrets are four separate values, and v2's service-principal-with-secret path
+wants them pre-assembled into a single `creds` JSON blob.
+
+### Which commit gets built
+
+With no `version` input the workflow takes `git describe --tags --abbrev=0`,
+verifies the tag exists, and then checks **that tag** out with
+`git checkout --detach`.
+
+That last part matters. `main` already carries the release plugin's post-tag
+version-bump commit, so building `main` and labelling it `0.0.6` would ship
+something that is not `0.0.6`. The tag is the only ref whose contents match its
+name. The image coordinate comes from `artifactId` in `app/gradle.properties`,
+read with `sed` — the same trick `release.yml` uses for the developer identity —
+so the image name is never a second source of truth.
+
+> **Only tags cut after the ACR migration can be built.** ACR builds the *tag's
+> own* `Dockerfile`, and every tag up to `0.0.6` still carries
+> `RUN --mount=type=secret,…`, which the classic builder rejects. The version
+> step greps the checked-out `Dockerfile` for BuildKit mounts and fails with
+> that explanation rather than letting it surface minutes later from inside
+> Azure. In practice: **the first release cut after this workflow landed is the
+> first one this workflow can build** — so the first real end-to-end run means
+> running `release.yml` first.
+>
+> The grep strips comment lines before matching, because the Dockerfile's own
+> explanation of why the mounts were removed quotes the string being searched
+> for.
+
+Two files are staged out of the workspace *before* the tag checkout, because
+`git checkout --detach` replaces the working tree and would delete anything the
+tag does not contain: `acr-smoke-test.yaml` is copied to `$RUNNER_TEMP` and read
+from there. That is also the correct layering — the workflow and its task file
+are a matched pair belonging to the ref the run was dispatched from, and only
+the *application source* should come from the tag.
+
+### The build runs inside ACR
+
+```bash
+az acr build --registry "$ACR_NAME" --image spring-blueprint:0.0.6 \
+  --build-arg APP_VERSION=0.0.6 \
+  --secret-build-arg GITHUB_USER=... --secret-build-arg GITHUB_TOKEN=... .
+```
+
+The runner only uploads the build context (governed by `.dockerignore`) — no
+Docker daemon, no buildx, no `docker login`, no image transfer over the runner's
+network. `az acr build` pushes on success by default, so there is no push step.
+
+The two credentials go in as `--secret-build-arg`, **not** `--build-arg`: the
+command's own help warns that plain build-arg values are surfaced to the ACR team
+for debugging. `APP_VERSION` is ordinary — it only feeds the
+`org.opencontainers.image.version` label.
+
+Because the build happens on an ACR Tasks agent, it uses the **classic** Docker
+builder. That is the whole reason the Dockerfile takes its credentials as `ARG`s;
+see the callout under [Docker](#docker) before changing either.
+
+### The smoke test
+
+A push only proves the layers uploaded. `acr-smoke-test.yaml` at the repo root
+proves the image *serves*:
+
+```yaml
+steps:
+  - id: app
+    cmd: $Registry/{{.Values.image}}
+    detach: true
+    when: ["-"]
+  - id: smoke
+    cmd: curl --fail --silent --show-error http://app:8080/actuator/health
+    startDelay: 30
+    retries: 5
+    retryDelay: 10
+    when: ["app"]
+```
+
+Two ACR Tasks behaviours carry it. A step's `id` is the running container's
+**DNS host name** for every other container in the task, which is how `smoke`
+reaches the detached app at `http://app:8080` with nothing to link or publish.
+And `curl` is a predefined **image alias** for `mcr.microsoft.com/acr/curl`, not
+the agent's curl — so nothing is pulled from Docker Hub and no anonymous-pull
+rate limit applies.
+
+Waiting is expressed with step properties (`startDelay`, `retries`,
+`retryDelay`), not `curl --retry-connrefused`. That flag needs a curl newer than
+the `acr/curl` alias may pin, and connection-refused during startup is exactly
+the case that must be tolerated. Budget: 30s of grace, then up to five further
+attempts 10s apart.
+
+It is invoked with `/dev/null` as the source location, which is correct and needs
+no context upload — the CLI treats `/dev/null` as a null context and base64-
+encodes the local `--file` into the run request, with `--set` still applied.
+
+### Things worth knowing before relying on it
+
+- **The service principal needs push rights, not just Terraform rights.**
+  `az acr build` requires `Microsoft.ContainerRegistry/registries/scheduleRun/action`.
+  Contributor at subscription scope covers it; a narrower Terraform-only role
+  does not. The `AcrPull` grant in module `06-acr` is the *pull* side and does
+  not help here.
+- **This repository can now mutate Azure infrastructure.** The `apply-*` targets
+  run under `-auto-approve`. The pinned tag ref is the mitigation actually taken;
+  a GitHub Environment approval gate remains available and unused.
+- **`concurrency` groups are per-repository**, so this workflow's group does not
+  serialize against `azure-iac`'s own runs of the same modules. A real collision
+  is contained by the Terraform blob lease — the second run *fails* with a lock
+  error rather than corrupting state. Do not work around it with `-lock=false`.
+- **The `plan-*` steps inside `provision-acr.yml` gate nothing.** `apply-*` does
+  not consume the `tfplan` that `plan-*` writes; it re-plans internally. The plan
+  output is there to make the intended change visible in the log, and for nothing
+  else.
+
 
 ## Diagnostics
 
