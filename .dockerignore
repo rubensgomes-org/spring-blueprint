@@ -7,9 +7,14 @@
 #
 # NOTE: do NOT add any of these -- the build breaks without them:
 #   gradlew, gradle/wrapper/gradle-wrapper.jar, settings.gradle.kts,
-#   gradle.properties, app/gradle.properties, app/build.gradle.kts,
-#   .editorconfig (spotless reads it), all three *.lockfile files, and
-#   app/src/test (bootJar depends on check, which runs the suite).
+#   build.gradle.kts, gradle.properties, app/gradle.properties,
+#   app/build.gradle.kts, .editorconfig (spotless reads it), all four
+#   *.lockfile files, and app/src/test (bootJar depends on check, which
+#   runs the suite).
+#
+#   The ROOT build.gradle.kts and buildscript-gradle.lockfile are easy to
+#   overlook: ":app" inherits the root buildscript classpath, so without
+#   them ":app" resolves spotless itself and LockMode.STRICT rejects it.
 
 # ---------- Gradle output and caches ----------
 # Rebuilt inside the image; machine-specific and large.

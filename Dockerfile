@@ -45,14 +45,27 @@ WORKDIR /build
 # BuildKit layer level, which -- unlike a cache mount -- survives
 # --cache-from in CI.
 #
-# All three lock files are mandatory: dependency locking runs in
+# All four lock files are mandatory: dependency locking runs in
 # LockMode.STRICT for both the project and the buildscript classpath, so
 # a missing lock file fails the build rather than resolving freely.
+#
+# The ROOT "build.gradle.kts" and its lock file are equally mandatory,
+# for a reason that is easy to miss. It applies spotless, which puts that
+# plugin on the root buildscript classpath, and ":app" INHERITS its
+# parent's buildscript classpath. Drop the root script and ":app" has to
+# resolve spotless into its own "classpath" configuration instead, where
+# LockMode.STRICT rejects all 22 artifacts as "not part of the dependency
+# lock state" -- they are locked in the ROOT lock file, not in
+# "app/buildscript-gradle.lockfile". ":app:check" also wires in
+# rootProject.tasks.named("spotlessCheck"), which cannot resolve at all
+# without the root script.
 COPY gradlew                        ./
 COPY gradle/                        ./gradle/
 COPY settings.gradle.kts            ./
+COPY build.gradle.kts               ./
 COPY gradle.properties              ./
 COPY settings-gradle.lockfile       ./
+COPY buildscript-gradle.lockfile    ./
 COPY .editorconfig                  ./
 COPY app/build.gradle.kts           ./app/
 COPY app/gradle.properties          ./app/

@@ -79,7 +79,23 @@ curl http://localhost:8080/actuator/health
 
 **Gradle** — press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal running
 `bootRun`. That is the correct way; it shuts down gracefully, draining in-flight
-requests before the JVM exits:
+requests before the JVM exits.
+
+> **The shutdown logs will not appear, even though the shutdown ran.**
+> <kbd>Ctrl</kbd>+<kbd>C</kbd> signals your terminal's foreground process group,
+> which holds only the thin `gradlew` client. The application JVM is a child of
+> the Gradle *daemon* and sits in a different process group entirely. The
+> daemon does SIGTERM it once the client goes away, so the graceful path runs
+> in full — but the client that was rendering the daemon's output has already
+> exited, so every line logged from that point on is discarded.
+
+To watch the shutdown instead of just trusting it, leave `bootRun` running and
+send SIGTERM from a second terminal. The Gradle client stays attached, so the
+logs render live in the `bootRun` terminal:
+
+```bash
+kill $(pgrep -f com.rubensgomes.blueprint.App)
+```
 
 ```
 INFO ... AppShutdownEventListener  : Handling SIGTERM
@@ -88,17 +104,15 @@ INFO ... GracefulShutdown          : Graceful shutdown complete
 INFO ... HelloWorldService         : I am being terminated.
 ```
 
+The argument to `pgrep -f` is the fully qualified main class — the `mainClass`
+property in `app/gradle.properties` — which is what identifies this JVM among
+the several Java processes a Gradle build leaves running.
+`kill $(lsof -ti tcp:8080)` works too, and is the better choice if you have
+lost track of which application is holding the port.
+
 > **Gradle then prints `BUILD FAILED`. That is expected, not an error.** The
 > forked application JVM was terminated by a signal, so it exits non-zero and
-> Gradle reports the `bootRun` task as failed. The shutdown above still ran
-> cleanly.
-
-If you lost the terminal, signal the process directly — SIGTERM triggers the
-same graceful path:
-
-```bash
-kill $(lsof -ti tcp:8080)
-```
+> Gradle reports the `bootRun` task as failed. The shutdown still ran cleanly.
 
 > **`./gradlew --stop` does not stop the application.** It stops the Gradle
 > *daemon*, which is a different process; the app keeps running.
