@@ -6,35 +6,19 @@
 #   extractor -- explodes the layered jar into its four cache layers
 #   runtime   -- minimal JRE image running as a non-root user
 #
-# Build (BuildKit required for the secret mounts):
+# Build -- both variables must be exported first:
 #
-#   docker build \
-#     --secret id=github_user,env=GITHUB_USER \
-#     --secret id=github_token,env=GITHUB_TOKEN \
+#   export GITHUB_USER=... GITHUB_TOKEN=...
+#   docker build --build-arg GITHUB_USER --build-arg GITHUB_TOKEN \
 #     -t spring-blueprint:local .
 #
-# Or simply "docker compose build", which wires the same secrets.
-#
-# https://docs.spring.io/spring-boot/reference/packaging/container-images/dockerfiles.html
-
+# Or simply "docker compose build", which forwards the same two variables.
 
 # ---------------------------------------------------------------------
 # --------------- >>> Stage 1: builder <<< ----------------------------
 # NOTE: this base is chosen deliberately, not incidentally. The build
 # pins "vendor = JvmVendorSpec.MICROSOFT" and "languageVersion = 25" in
-# app/build.gradle.kts. Gradle always considers the JVM running Gradle as
-# a toolchain candidate, and this image reports java.vendor "Microsoft"
-# at 25.0.4.1, so the spec is satisfied by the JVM already present and
-# the foojay resolver never fires. A Temurin, Corretto or gradle:*
-# builder would instead download an entire second ~200 MB Microsoft JDK
-# on every cold build. Keep this base in step with the vendor pinned in
-# the build script -- if one changes, the other must change with it.
-#
-# Unlike the Amazon Linux *minimal* images, this Ubuntu-based one already
-# ships "find" and "xargs", so no extra package install is needed. The
-# Gradle wrapper hard-requires xargs and aborts with "xargs is not
-# available" before doing anything else; the jar-selection step below
-# uses find. Do not switch to a slimmer base without re-checking both.
+# app/build.gradle.kts.
 # ---------------------------------------------------------------------
 FROM mcr.microsoft.com/openjdk/jdk:25-ubuntu AS builder
 
@@ -44,28 +28,11 @@ WORKDIR /build
 # the Gradle-distribution and dependency-resolution layers cached at the
 # BuildKit layer level, which -- unlike a cache mount -- survives
 # --cache-from in CI.
-#
-# All four lock files are mandatory: dependency locking runs in
-# LockMode.STRICT for both the project and the buildscript classpath, so
-# a missing lock file fails the build rather than resolving freely.
-#
-# The ROOT "build.gradle.kts" and its lock file are equally mandatory,
-# for a reason that is easy to miss. It applies spotless, which puts that
-# plugin on the root buildscript classpath, and ":app" INHERITS its
-# parent's buildscript classpath. Drop the root script and ":app" has to
-# resolve spotless into its own "classpath" configuration instead, where
-# LockMode.STRICT rejects all 22 artifacts as "not part of the dependency
-# lock state" -- they are locked in the ROOT lock file, not in
-# "app/buildscript-gradle.lockfile". ":app:check" also wires in
-# rootProject.tasks.named("spotlessCheck"), which cannot resolve at all
-# without the root script.
 COPY gradlew                        ./
 COPY gradle/                        ./gradle/
 COPY settings.gradle.kts            ./
-COPY build.gradle.kts               ./
 COPY gradle.properties              ./
 COPY settings-gradle.lockfile       ./
-COPY buildscript-gradle.lockfile    ./
 COPY .editorconfig                  ./
 COPY app/build.gradle.kts           ./app/
 COPY app/gradle.properties          ./app/
@@ -77,46 +44,38 @@ COPY app/buildscript-gradle.lockfile ./app/
 COPY app/src/ ./app/src/
 
 # Escape hatch for iterating on this Dockerfile:
+#
 #   docker build --build-arg GRADLE_BUILD_ARGS="-x check" ...
-# Defaults to empty so the image can only be built from code that passes
-# verification. CI must never set this.
 #
 # "-x check" alone prunes the whole verification subgraph: test,
 # jacocoTestReport, jacocoTestCoverageVerification and spotlessCheck are
-# reachable only through check.
+# reachable only through check. Defaults to empty so the image can only be
+# built from code that passes verification. CI must never set this.
 ARG GRADLE_BUILD_ARGS=""
 
-# The credentials are a command prefix, not ENV instructions, so they
-# exist only in this one process. They never enter a layer or
-# "docker history". Command substitution also strips the trailing newline
-# that most secret managers append.
-#
 # GITHUB_USER/GITHUB_TOKEN are mandatory, not optional: settings.gradle.kts
 # resolves the "com.rubensgomes:gradle-catalog" version catalog from GitHub
 # Packages, and every plugin alias comes through that catalog, so a cold
-# Docker cache resolves nothing without them. Missing credentials produce
-# only a warning, then a confusing HTTP 401.
+# Docker cache resolves nothing without them.
 #
-# sharing=locked on the cache mount is required: GRADLE_USER_HOME holds
-# the modules-2 file locks and the build cache, so concurrent unlocked
-# builds would corrupt it.
+# Callers pass them WITHOUT a value ("--build-arg GITHUB_USER"), so Docker
+# reads each from the ambient environment and the token never appears in the
+# process argv where "ps" could read it.
 #
-# auto-download=false makes a toolchain mismatch fail in seconds with
-# "No matching toolchain" instead of silently pulling a second JDK, should
-# anyone later change the base image above.
-RUN --mount=type=secret,id=github_user \
-    --mount=type=secret,id=github_token \
-    --mount=type=cache,target=/root/.gradle,sharing=locked \
-    GITHUB_USER="$(cat /run/secrets/github_user)" \
-    GITHUB_TOKEN="$(cat /run/secrets/github_token)" \
+# auto-download=false makes a toolchain mismatch fail in seconds with "No
+# matching toolchain" rather than silently pulling a second JDK.
+ARG GITHUB_USER
+ARG GITHUB_TOKEN
+RUN set -eu; \
+    if [ -z "${GITHUB_USER:-}" ] || [ -z "${GITHUB_TOKEN:-}" ]; then \
+      echo "GITHUB_USER and GITHUB_TOKEN build args are required." >&2; \
+      echo "This stage resolves com.rubensgomes:gradle-catalog from GitHub Packages." >&2; \
+      exit 1; \
+    fi; \
     ./gradlew --no-daemon --console=plain \
       -Porg.gradle.java.installations.auto-download=false \
       :app:bootJar ${GRADLE_BUILD_ARGS}
 
-# The archive base name comes from the artifactId property, not the "app"
-# project directory, and the release plugin bumps the version -- so glob
-# rather than hardcode. The exclusions guard against -plain/-sources/
-# -javadoc jars appearing if the build graph ever widens.
 RUN set -eu; \
     jar="$(find app/build/libs -name 'spring-blueprint-*.jar' \
              ! -name '*-plain.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar')"; \
@@ -126,16 +85,6 @@ RUN set -eu; \
 
 # ---------------------------------------------------------------------
 # --------------- >>> Stage 2: extractor <<< --------------------------
-# NOTE: Spring Boot 4 REMOVED the "layertools" jarmode -- the boot jar
-# bundles spring-boot-jarmode-tools, and "-Djarmode=layertools" fails
-# with "Unsupported jarmode". The "tools ... extract" form below is the
-# Boot 3.3+ replacement.
-#
-# NOTE: --destination must not already exist or be non-empty;
-# ExtractCommand refuses otherwise. Do not pre-create it.
-#
-# Its only input is the jar, so this stage re-runs only when the jar
-# bytes change, and it runs on the small JRE rather than the JDK.
 # ---------------------------------------------------------------------
 FROM eclipse-temurin:25-jre-alpine AS extractor
 
@@ -147,11 +96,6 @@ RUN java -Djarmode=tools -jar application.jar \
 
 # ---------------------------------------------------------------------
 # --------------- >>> Stage 3: runtime <<< ----------------------------
-# NOTE: the alpine variant is chosen for the HEALTHCHECK. busybox
-# provides wget at zero extra size, whereas the Ubuntu-based Temurin JRE
-# images ship no wget and would need an apt-get layer for curl. There is
-# no JVM-only alternative: a JRE cannot run a single-file source-launch
-# health probe because it has no compiler.
 # ---------------------------------------------------------------------
 FROM eclipse-temurin:25-jre-alpine AS runtime
 
@@ -208,15 +152,4 @@ STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
   CMD wget -q --spider http://127.0.0.1:8080/actuator/health || exit 1
 
-# Exec form, so no shell is interposed and the JVM is PID 1. That is what
-# lets "docker stop" deliver SIGTERM straight to the JVM and trigger
-# Spring's graceful shutdown (server.shutdown=graceful,
-# spring.lifecycle.timeout-per-shutdown-phase=5s). Wrapping this in
-# "sh -c" to expand a $JAVA_OPTS variable would make sh PID 1, and sh does
-# not forward SIGTERM -- graceful shutdown would silently degrade to a
-# 10-second SIGKILL. JDK_JAVA_OPTIONS above provides that configurability
-# without a shell.
-#
-# No -jar or -cp: with neither set the JVM defaults the classpath to ".",
-# and WORKDIR is the merged exploded jar where JarLauncher lives.
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

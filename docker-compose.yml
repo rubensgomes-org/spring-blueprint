@@ -6,14 +6,9 @@
 ##   docker compose down              tear it down
 ##
 ## GITHUB_USER and GITHUB_TOKEN must be exported in your shell: they are
-## passed to the build as BuildKit secrets so Gradle can resolve the shared
-## version catalog from GitHub Packages. They are build-time only and never
-## enter an image layer.
-##
-## NOTE: the "version" key is obsolete under the Compose Specification and
-## Compose v2 warns about it. "name" fixes the project name so container and
-## network names do not depend on the checkout directory.
-## https://docs.docker.com/reference/compose-file/
+## forwarded to the build as build args so Gradle can resolve the shared
+## version catalog from GitHub Packages. They are consumed only by the
+## Dockerfile's discarded "builder" stage and never reach the runtime image.
 name: spring-blueprint
 
 services:
@@ -21,19 +16,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      ## NOTE: APP_VERSION is deliberately NOT passed here. It only feeds the
-      ## "org.opencontainers.image.version" label, and hardcoding it in this
-      ## file made it a second source of truth for the project version -- it
-      ## went stale the first time the release plugin bumped the version.
-      ## Compose builds therefore carry the Dockerfile's "unknown" default,
-      ## which is honest. Use "./gradlew dockerBuild" for a correctly stamped
-      ## image: that task reads the version from "app/gradle.properties" and
-      ## tags "<artifactId>:<version>" alongside "<artifactId>:local".
-      ##
-      ## Maps to "--mount=type=secret,id=github_user" in the Dockerfile.
-      secrets:
-        - github_user
-        - github_token
+      ## Maps to "ARG GITHUB_USER" / "ARG GITHUB_TOKEN" in the Dockerfile's
+      ## builder stage. The list form -- names with no values -- makes Compose
+      ## resolve each from the host environment, so the token is never written
+      ## into this file or onto the build command line.
+      args:
+        - GITHUB_USER
+        - GITHUB_TOKEN
     image: "spring-blueprint:local"
     container_name: spring-blueprint
 
@@ -96,14 +85,3 @@ services:
           memory: 1g
         reservations:
           memory: 512m
-
-## Sourced from the host environment at compose time. If your Compose version
-## rejects the "environment" provider, switch to:
-##   github_token:
-##     file: ./.secrets/github_token
-## and add .secrets/ to .gitignore and .dockerignore.
-secrets:
-  github_user:
-    environment: GITHUB_USER
-  github_token:
-    environment: GITHUB_TOKEN
