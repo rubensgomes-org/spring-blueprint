@@ -5,154 +5,30 @@
 # See the LICENSE file for licensing terms and additional AI disclosures.
 
 # ---------------------------------------------------------------------------
-# Cuts a release of spring-blueprint.
+# Runs "./gradlew release" (net.researchgate.release).
 #
-# MANUALLY TRIGGERED ONLY. There is no push or schedule trigger: a release is a
-# deliberate act, and this workflow WRITES TO THE REPOSITORY. Run it from the
-# Actions tab ("Run workflow"), or with "gh workflow run release.yml".
-#
-# WHAT "./gradlew release" DOES
-#   The net.researchgate.release plugin orchestrates this chain at execution
-#   time (it does not appear in a task tree):
-#
-#     checkCommitNeeded -> checkUpdateNeeded -> prepareVersions
-#     -> unSnapshotVersion -> confirmReleaseVersion
-#     -> checkSnapshotDependencies -> runBuildTasks -> preTagCommit
-#     -> createReleaseTag -> updateVersion -> commitNewVersion
-#
-#   Concretely: strips "-SNAPSHOT" from the version in app/gradle.properties,
-#   runs the FULL build (runBuildTasks -> build -> check, so the JUnit suite,
-#   the 90% coverage gate and every Spotless check must pass), tags the
-#   release, bumps to the next snapshot, and PUSHES two commits plus a tag to
-#   "main".
-#
-#   This repository is single-trunk: the release plugin's release-branch
-#   merge steps are not configured (see the note on pushReleaseVersionBranch
-#   in app/build.gradle.kts), so a release is identified by its tag alone.
-#
-#   Because it pushes to main, each release also triggers ~2 runs of
-#   build-verify.yml. That is expected.
-#
-# PRECONDITIONS (the plugin fails the build if any is unmet)
-#   - the current branch is "main"          -> requireBranch in app/build.gradle.kts
-#   - the working tree is clean, with nothing unpushed or unpulled
-#   - "version" in app/gradle.properties ends in "-SNAPSHOT"
-#   - no SNAPSHOT dependencies
-#
-#   "release.useAutomaticVersion=true" in the root gradle.properties suppresses
-#   the plugin's interactive version prompts. Without it this workflow would
-#   hang forever waiting on stdin.
+# The body lives in rubensgomes-org/azure-workflows. "contents: write" is
+# granted HERE because a reusable workflow can only ever hold permissions the
+# caller already has.
 #
 # @author Rubens Gomes
 # ---------------------------------------------------------------------------
 name: release
 
 on:
-  # Manual only, and deliberately so -- see the header. GitHub always runs a
-  # workflow_dispatch from the default branch's copy of this file.
   workflow_dispatch:
 
-# Unlike build-verify.yml, this workflow WRITES: two commits and a tag on
-# "main". "contents: write" is what allows that.
-#
-# NOTE: the push is actually authenticated with the PAT persisted by the
-# checkout step below, not with the automatic per-run token. That is required
-# rather than cosmetic -- a push made with the automatic token does not trigger
-# other workflows, so build-verify.yml would never run on the released commit.
 permissions:
   contents: write
 
-# Never cut two releases at once. Both would compute a version from the same
-# starting point and race to tag it. cancel-in-progress is false because
-# interrupting a half-finished release leaves tags and commits in an
-# inconsistent state -- let the first one finish.
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
   release:
-    name: release
-    runs-on: ubuntu-latest
-
-    # A release runs the full build plus several git round trips. The ceiling
-    # stops a hung step -- an unexpected interactive prompt, say -- from
-    # burning hours.
-    timeout-minutes: 30
-
-    env:
-      # Carriers for the credentials the build reads as GITHUB_USER and
-      # GITHUB_TOKEN. They cannot be declared under those names because GitHub
-      # Actions reserves the "GITHUB_" prefix, so each step exports them into
-      # its own shell. settings.gradle.kts reads them while EVALUATING
-      # SETTINGS to resolve the shared version catalog from GitHub Packages,
-      # so every ./gradlew invocation needs them.
-      PACKAGES_USER: ${{ github.actor }}
-      PACKAGES_TOKEN: ${{ secrets.RUBENS_PAT_TOKEN }}
-
-      # Same flags build-verify.yml uses, for the same reasons: quieten the
-      # info-level logging set in gradle.properties, and pin the toolchain to
-      # the JDK installed below rather than letting foojay download a second
-      # one. See that file for the full rationale.
-      GRADLE_ARGS: >-
-        --console=plain
-        -Dorg.gradle.logging.level=lifecycle
-        -Porg.gradle.java.installations.auto-download=false
-
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v7
-        with:
-          # The plugin's requireBranch is "main", and it compares local against
-          # remote before doing anything. Check out the branch itself, with
-          # full history and tags -- a shallow clone breaks both the branch
-          # check and tag creation.
-          ref: main
-          fetch-depth: 0
-
-          # This token is persisted into .git/config and is what the plugin's
-          # own "git push" calls use. It must be a PAT with write access; the
-          # automatic per-run token would push successfully but suppress the
-          # downstream build-verify run.
-          token: ${{ secrets.RUBENS_PAT_TOKEN }}
-
-      # Must precede setup-gradle and any ./gradlew call: it sets JAVA_HOME,
-      # which is both the JVM running the daemon and the toolchain candidate
-      # Gradle discovers. Microsoft 25 matches the JvmVendorSpec.MICROSOFT pin.
-      - name: Set up Java 25 (Microsoft Build of OpenJDK)
-        uses: actions/setup-java@v5
-        with:
-          distribution: microsoft
-          java-version: '25'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v6
-
-      # The plugin makes two commits. Git refuses to commit without an identity
-      # configured, and a CI runner has none, so the release would fail at
-      # preTagCommit. The values are read from gradle.properties so this
-      # workflow does not become a second place the maintainer's identity is
-      # written down.
-      - name: Configure the git identity used for release commits
-        shell: bash
-        run: |
-          echo "=============================================================="
-          echo " STEP: Configure the git identity used for release commits"
-          echo "=============================================================="
-          git config user.name  "$(sed -n 's/^developerName=//p'  gradle.properties)"
-          git config user.email "$(sed -n 's/^developerEmail=//p' gradle.properties)"
-          git config --get user.name
-          git config --get user.email
-
-      # ---------------------------- release ----------------------------
-      # The one step that matters. Everything above exists to let it succeed.
-      - name: release
-        shell: bash
-        run: |
-          echo "=============================================================="
-          echo " STEP: release"
-          echo " ./gradlew release"
-          echo "=============================================================="
-          export GITHUB_USER="$PACKAGES_USER"
-          export GITHUB_TOKEN="$PACKAGES_TOKEN"
-          ./gradlew $GRADLE_ARGS release
+    uses: rubensgomes-org/azure-workflows/.github/workflows/gradle-release.yml@v1
+    secrets:
+      # Needs repo (to push the release commits and tag) as well as
+      # read:packages (to resolve the version catalog).
+      packages-token: ${{ secrets.RUBENS_PAT_TOKEN }}
