@@ -28,6 +28,7 @@
 - NEVER create files unless absolutely necessary
 - ALWAYS prefer editing existing files
 - NEVER proactively create documentation files
+- MUST keep documentation short and simple
 - Do only what's asked, nothing more
 
 ## Java Language Specific Guidelines

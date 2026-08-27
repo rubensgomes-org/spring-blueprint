@@ -16,16 +16,19 @@
 #   time (it does not appear in a task tree):
 #
 #     checkCommitNeeded -> checkUpdateNeeded -> prepareVersions
-#     -> checkoutMergeToReleaseBranch -> unSnapshotVersion
-#     -> confirmReleaseVersion -> checkSnapshotDependencies -> runBuildTasks
-#     -> preTagCommit -> createReleaseTag -> checkoutMergeFromReleaseBranch
-#     -> updateVersion -> commitNewVersion
+#     -> unSnapshotVersion -> confirmReleaseVersion
+#     -> checkSnapshotDependencies -> runBuildTasks -> preTagCommit
+#     -> createReleaseTag -> updateVersion -> commitNewVersion
 #
 #   Concretely: strips "-SNAPSHOT" from the version in app/gradle.properties,
 #   runs the FULL build (runBuildTasks -> build -> check, so the JUnit suite,
 #   the 90% coverage gate and every Spotless check must pass), tags the
-#   release, merges to the "release" branch, bumps to the next snapshot, and
-#   PUSHES two commits plus a tag plus that branch.
+#   release, bumps to the next snapshot, and PUSHES two commits plus a tag to
+#   "main".
+#
+#   This repository is single-trunk: the release plugin's release-branch
+#   merge steps are not configured (see the note on pushReleaseVersionBranch
+#   in app/build.gradle.kts), so a release is identified by its tag alone.
 #
 #   Because it pushes to main, each release also triggers ~2 runs of
 #   build-verify.yml. That is expected.
@@ -49,8 +52,8 @@ on:
   # workflow_dispatch from the default branch's copy of this file.
   workflow_dispatch:
 
-# Unlike build-verify.yml, this workflow WRITES: commits, a tag, and the
-# "release" branch. "contents: write" is what allows that.
+# Unlike build-verify.yml, this workflow WRITES: two commits and a tag on
+# "main". "contents: write" is what allows that.
 #
 # NOTE: the push is actually authenticated with the PAT persisted by the
 # checkout step below, not with the automatic per-run token. That is required

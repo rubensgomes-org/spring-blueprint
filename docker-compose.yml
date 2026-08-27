@@ -5,10 +5,9 @@
 ##   docker compose ps                check health
 ##   docker compose down              tear it down
 ##
-## GITHUB_USER and GITHUB_TOKEN must be exported in your shell: they are
-## forwarded to the build as build args so Gradle can resolve the shared
-## version catalog from GitHub Packages. They are consumed only by the
-## Dockerfile's discarded "builder" stage and never reach the runtime image.
+## Run "./gradlew build" first. It packages the jar the Dockerfile copies and
+## regenerates the root ".env" holding APP_VERSION, which is read below.
+##
 name: spring-blueprint
 
 services:
@@ -16,14 +15,26 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      ## Maps to "ARG GITHUB_USER" / "ARG GITHUB_TOKEN" in the Dockerfile's
-      ## builder stage. The list form -- names with no values -- makes Compose
-      ## resolve each from the host environment, so the token is never written
-      ## into this file or onto the build command line.
+      ## Maps to "ARG APP_VERSION" in the Dockerfile's runtime stage, which
+      ## feeds the org.opencontainers.image.version label.
+      ##
+      ## The interpolated form is deliberate. A bare "- APP_VERSION" is
+      ## documented to take its value from the environment Compose runs in,
+      ## which does not reliably include the ".env" file; "${APP_VERSION}" is
+      ## ordinary variable substitution, which does read ".env". An exported
+      ## shell variable still overrides the file.
+      ##
+      ## The ":?" guard is what turns a missing ".env" into an immediate,
+      ## actionable failure. Without it Compose only WARNS ("variable is not
+      ## set. Defaulting to a blank string"), builds anyway, and the run dies
+      ## much later inside the Dockerfile with "APP_VERSION must be provided"
+      ## -- a message that never mentions the real cause.
       args:
-        - GITHUB_USER
-        - GITHUB_TOKEN
-    image: "spring-blueprint:local"
+        - "APP_VERSION=${APP_VERSION:?not set; run ./gradlew build first to generate .env}"
+    ## Tagged with the real version rather than a fixed "local", so a local
+    ## image and a released one are never confused. Interpolated from the same
+    ## ".env"; the guard above fires first if it is missing.
+    image: "spring-blueprint:${APP_VERSION}"
     container_name: spring-blueprint
 
     environment:

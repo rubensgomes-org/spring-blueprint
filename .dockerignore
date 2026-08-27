@@ -16,6 +16,12 @@
 # Rebuilt inside the image; machine-specific and large.
 build/
 app/build/
+# ...except the Spring Boot layered jar that the builder stage copies. Docker
+# applies the LAST matching pattern, so this re-admits that single file while
+# app/build/ keeps out the ~50 MB of versioned, sources and javadoc jars
+# beside it. The name is fixed -- the "applicationJar" Gradle task renames the
+# versioned bootJar -- so this pattern does not churn with the version.
+!app/build/libs/spring-blueprint-spring-boot.jar
 .gradle/
 app/.gradle/
 
