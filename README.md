@@ -172,7 +172,8 @@ layer means editing one class.
 | `./gradlew publishToMavenLocal`             | Install to `~/.m2`                                   |
 | `./gradlew release`                         | Tag, merge to `release`, bump (prefer the workflow)  |
 | `./gradlew :app:dependencies --write-locks` | Regenerate the `:app` dependency lock files          |
-| `gh workflow run release.yml`               | Cut a release from CI (manual trigger)               |
+| `gh workflow run build-verify.yml`          | Run the build + Sonar gate in CI                     |
+| `gh workflow run release.yml`               | Cut a release from CI                                |
 | `docker compose up --build -d`              | Build and run the image — `./gradlew build` first    |
 | `docker compose down`                       | Stop and remove the container                        |
 
@@ -189,9 +190,9 @@ spring-blueprint/
 ├── gradle.properties          # developer identity, license, SCM, Sonar, daemon
 ├── BUILD.md                   # build documentation
 ├── llms.txt                   # machine-readable project index
-├── .github/workflows/
-│   ├── build-verify.yml       # CI: compile, test, check, sonar on push to main
-│   └── release.yml            # manual: ./gradlew release
+├── .github/workflows/         # stubs; bodies live in rubensgomes-org/azure-workflows
+│   ├── build-verify.yml       # build + sonar
+│   └── release.yml            # ./gradlew release
 └── app/
     ├── build.gradle.kts       # the entire build
     ├── gradle.lockfile        # lock state: application dependencies
