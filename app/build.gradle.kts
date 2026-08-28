@@ -369,6 +369,14 @@ tasks.javadoc {
         // emit HTML5 markup rather than the legacy HTML4 output
         (options as StandardJavadocDocletOptions).addBooleanOption("html5", true)
     }
+
+    // Run every doclint check EXCEPT "missing". CLAUDE.md forbids Javadoc on
+    // private members, constructors and obvious methods, which doclint's
+    // missing-comment check reports as warnings -- following the documentation
+    // standard would otherwise mean a permanently noisy build. The checks that
+    // catch real defects (broken @link targets, malformed HTML, bad @param
+    // names) all stay on.
+    (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:all,-missing", "-quiet")
 }
 
 // *********************************************************************

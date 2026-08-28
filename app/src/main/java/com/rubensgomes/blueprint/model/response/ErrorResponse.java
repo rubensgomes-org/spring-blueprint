@@ -11,6 +11,10 @@ import java.time.Instant;
  * <p>Mirrors the field names Spring Boot's default error attributes use, so a client written
  * against the Whitelabel JSON payload keeps working.
  *
+ * <p>A value object, declared as a record so the accessors, {@code equals}, {@code hashCode} and
+ * {@code toString} are generated and the components are final. The type carries no behaviour: it
+ * exists to give the error payload a name and a fixed shape.
+ *
  * @param timestamp when the failure was rendered
  * @param status the HTTP status code, for example {@code 404}
  * @param error the HTTP reason phrase, for example {@code Not Found}

@@ -29,6 +29,11 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Note that this changes only the error <em>representation</em>. A request to an unmapped path
  * still returns 404; it simply returns it as JSON, which is what a REST client expects.
  *
+ * <p>Two patterns are at work. The single {@code /error} mapping is the centralised error-handling
+ * pattern -- one place renders every failure, instead of each handler formatting its own. {@link
+ * #UNKNOWN_PATH} and {@link #NO_DETAIL_MESSAGE} are null objects: a missing attribute yields a
+ * harmless stand-in, so no caller downstream has to null-check.
+ *
  * @author <a href="https://rubensgomes.com">Rubens Gomes</a>
  */
 @Slf4j
@@ -61,9 +66,6 @@ public class GlobalErrorController implements ErrorController {
    * @param request the forwarded request carrying the {@code jakarta.servlet.error.*} attributes
    * @return the error body, with the same HTTP status the original request failed with
    */
-  // NOTE: the methods are enumerated rather than left to the @RequestMapping
-  // default, which silently accepts every method including TRACE. Do not narrow
-  // this list -- see the Javadoc above for why it has to stay broad.
   @RequestMapping(
       path = ERROR_PATH,
       method = {
@@ -89,13 +91,6 @@ public class GlobalErrorController implements ErrorController {
     return new ResponseEntity<>(body, status);
   }
 
-  /**
-   * Reads the status the request failed with, falling back to 500 when the attribute is absent, not
-   * an {@code Integer}, or not a status Spring recognises.
-   *
-   * @param request the forwarded request
-   * @return the resolved status, never null
-   */
   private static HttpStatus resolveStatus(HttpServletRequest request) {
     return Optional.ofNullable(request.getAttribute(RequestDispatcher.ERROR_STATUS_CODE))
         .filter(Integer.class::isInstance)
@@ -104,14 +99,6 @@ public class GlobalErrorController implements ErrorController {
         .orElse(HttpStatus.INTERNAL_SERVER_ERROR);
   }
 
-  /**
-   * Reads a string request attribute, substituting a fallback when it is absent or blank.
-   *
-   * @param request the forwarded request
-   * @param name the {@code jakarta.servlet.error.*} attribute name
-   * @param fallback the value to use when the attribute carries nothing useful
-   * @return the attribute value, or the fallback
-   */
   private static String attribute(HttpServletRequest request, String name, String fallback) {
     return Optional.ofNullable(request.getAttribute(name))
         .map(Object::toString)
