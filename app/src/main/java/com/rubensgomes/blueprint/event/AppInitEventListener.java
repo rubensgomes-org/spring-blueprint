@@ -13,6 +13,11 @@ import org.springframework.stereotype.Component;
 /**
  * Handles application initialization event to display IP and port.
  *
+ * <p>Implements the observer pattern through Spring's {@link ApplicationListener} contract: the
+ * container publishes lifecycle events and this bean is notified, rather than {@code App.main}
+ * querying the server for its port after startup. Startup reporting therefore stays out of the
+ * bootstrap path and can be removed by deleting one class.
+ *
  * @author <a href="https://rubensgomes.com">Rubens Gomes</a>
  */
 @Slf4j

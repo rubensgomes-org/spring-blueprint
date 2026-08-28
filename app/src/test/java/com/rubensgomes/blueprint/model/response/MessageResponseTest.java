@@ -41,9 +41,6 @@ class MessageResponseTest {
   @Test
   @DisplayName("toString exposes the message")
   void toStringContainsTheMessage() {
-    // The record-generated format, "Name[component=value]", replaces the
-    // hand-written "Name(component='value')" this type used before it
-    // became a record.
     assertThat(new MessageResponse(MESSAGE))
         .hasToString("MessageResponse[message=" + MESSAGE + "]");
   }

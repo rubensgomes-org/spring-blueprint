@@ -6,7 +6,6 @@ package com.rubensgomes.blueprint.web.controller;
 import com.rubensgomes.blueprint.model.response.MessageResponse;
 import com.rubensgomes.blueprint.service.HelloWorldService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -30,12 +29,6 @@ public class HelloWorldRestController {
 
   private final HelloWorldService service;
 
-  /**
-   * Creates a controller backed by the given service layer.
-   *
-   * @param service the service the request handling is delegated to
-   */
-  @Autowired
   public HelloWorldRestController(HelloWorldService service) {
     this.service = service;
   }
